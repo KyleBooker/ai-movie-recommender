@@ -26,6 +26,9 @@ export class InfraStack extends cdk.Stack {
       environment: {
         TABLE_NAME: watchHistory.tableName,
       },
+      bundling: {
+        externalModules: ['@aws-sdk/*'],
+      },
     });
 
     watchHistory.grantReadData(recommendationsFn);
@@ -42,6 +45,11 @@ export class InfraStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiUrl', {
       value: api.url,
       description: 'Base URL of the Movie Recommender API',
+    });
+
+    new cdk.CfnOutput(this, 'TableName', {
+      value: watchHistory.tableName,
+      description: 'DynamoDB table name (pass as TABLE_NAME env var to seed script)',
     });
   }
 }
