@@ -94,6 +94,34 @@ h1 {
   cursor: progress;
 }
 
+.secondary-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 0.7rem 1.4rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  font-family: inherit;
+  margin-left: 0.6rem;
+}
+
+.secondary-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+#auth-area {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 3rem;
+}
+
 .meta {
   color: var(--text-dim);
   font-size: 0.85rem;

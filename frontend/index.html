@@ -6,7 +6,6 @@
     <title>AI Movie Recommender</title>
     <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
     <link rel="stylesheet" href="style.css" />
-    <script src="config.json" type="application/json" id="app-config"></script>
   </head>
   <body>
     <main class="container">
@@ -16,9 +15,18 @@
           Personalized picks generated from your Plex watch history by Amazon
           Nova Micro on Bedrock.
         </p>
-        <button id="generate-btn" class="primary-btn">
-          Get recommendations
-        </button>
+
+        <div id="auth-area">
+          <button id="signin-btn" class="primary-btn" hidden>Sign in</button>
+          <button id="generate-btn" class="primary-btn" hidden>
+            Get recommendations
+          </button>
+          <button id="signout-btn" class="secondary-btn" hidden>
+            Sign out
+          </button>
+        </div>
+
+        <p id="user-line" class="meta"></p>
         <p id="meta" class="meta"></p>
       </header>
 

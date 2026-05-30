@@ -1,7 +1,11 @@
 const NUM_SKELETON_CARDS = 3;
+const TOKEN_KEY = "id_token";
 
 const els = {
-  btn: document.getElementById("generate-btn"),
+  signInBtn: document.getElementById("signin-btn"),
+  signOutBtn: document.getElementById("signout-btn"),
+  generateBtn: document.getElementById("generate-btn"),
+  userLine: document.getElementById("user-line"),
   results: document.getElementById("results"),
   meta: document.getElementById("meta"),
   error: document.getElementById("error"),
@@ -11,6 +15,61 @@ async function loadConfig() {
   const res = await fetch("config.json");
   if (!res.ok) throw new Error("Could not load config.json");
   return res.json();
+}
+
+function captureTokensFromHash() {
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.substring(1)
+    : "";
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const idToken = params.get("id_token");
+  if (!idToken) return null;
+  sessionStorage.setItem(TOKEN_KEY, idToken);
+  window.history.replaceState(null, "", window.location.pathname);
+  return idToken;
+}
+
+function getStoredToken() {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
+function clearToken() {
+  sessionStorage.removeItem(TOKEN_KEY);
+}
+
+function parseJwt(token) {
+  try {
+    const payload = token.split(".")[1];
+    const decoded = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
+function isTokenValid(token) {
+  const claims = parseJwt(token);
+  if (!claims?.exp) return false;
+  return claims.exp * 1000 > Date.now();
+}
+
+function buildLoginUrl(cognito) {
+  const params = new URLSearchParams({
+    client_id: cognito.clientId,
+    response_type: "token",
+    scope: "openid email profile",
+    redirect_uri: cognito.redirectUri,
+  });
+  return `${cognito.domain}/login?${params.toString()}`;
+}
+
+function buildLogoutUrl(cognito) {
+  const params = new URLSearchParams({
+    client_id: cognito.clientId,
+    logout_uri: cognito.redirectUri,
+  });
+  return `${cognito.domain}/logout?${params.toString()}`;
 }
 
 function showSkeletons() {
@@ -86,8 +145,14 @@ function renderRecommendations({ recommendations, meta }) {
   }
 }
 
-async function fetchRecommendations(apiUrl) {
-  const res = await fetch(`${apiUrl}recommendations`);
+async function fetchRecommendations(apiUrl, token) {
+  const res = await fetch(`${apiUrl}recommendations`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    clearToken();
+    throw new Error("Your session expired. Please sign in again.");
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API returned ${res.status}: ${body.slice(0, 200)}`);
@@ -95,29 +160,77 @@ async function fetchRecommendations(apiUrl) {
   return res.json();
 }
 
-async function onClick(apiUrl) {
-  els.btn.disabled = true;
-  els.btn.textContent = "Generating…";
+function renderSignedIn(claims) {
+  els.signInBtn.hidden = true;
+  els.generateBtn.hidden = false;
+  els.signOutBtn.hidden = false;
+  els.userLine.textContent = claims?.email
+    ? `Signed in as ${claims.email}`
+    : "Signed in";
+}
+
+function renderSignedOut() {
+  els.signInBtn.hidden = false;
+  els.generateBtn.hidden = true;
+  els.signOutBtn.hidden = true;
+  els.userLine.textContent = "";
+  els.results.innerHTML = "";
+  els.meta.textContent = "";
+}
+
+async function onGenerate(apiUrl) {
+  const token = getStoredToken();
+  if (!token || !isTokenValid(token)) {
+    clearToken();
+    renderSignedOut();
+    showError("Your session expired. Please sign in again.");
+    return;
+  }
+
+  els.generateBtn.disabled = true;
+  els.generateBtn.textContent = "Generating…";
   showSkeletons();
 
   try {
-    const data = await fetchRecommendations(apiUrl);
+    const data = await fetchRecommendations(apiUrl, token);
     renderRecommendations(data);
   } catch (err) {
     showError(err.message ?? "Something went wrong fetching recommendations.");
+    if (!getStoredToken()) renderSignedOut();
   } finally {
-    els.btn.disabled = false;
-    els.btn.textContent = "Get recommendations";
+    els.generateBtn.disabled = false;
+    els.generateBtn.textContent = "Get recommendations";
   }
 }
 
 (async () => {
   try {
     const config = await loadConfig();
-    if (!config.apiUrl) throw new Error("config.json is missing apiUrl");
-    els.btn.addEventListener("click", () => onClick(config.apiUrl));
+    if (!config.apiUrl || !config.cognito) {
+      throw new Error("config.json is missing apiUrl or cognito section");
+    }
+
+    captureTokensFromHash();
+    const token = getStoredToken();
+
+    if (token && isTokenValid(token)) {
+      renderSignedIn(parseJwt(token));
+    } else {
+      clearToken();
+      renderSignedOut();
+    }
+
+    els.signInBtn.addEventListener("click", () => {
+      window.location.href = buildLoginUrl(config.cognito);
+    });
+
+    els.signOutBtn.addEventListener("click", () => {
+      clearToken();
+      window.location.href = buildLogoutUrl(config.cognito);
+    });
+
+    els.generateBtn.addEventListener("click", () => onGenerate(config.apiUrl));
   } catch (err) {
     showError(`Frontend init failed: ${err.message}`);
-    els.btn.disabled = true;
   }
 })();
