@@ -11,8 +11,10 @@ const els = {
   servicesPane: document.getElementById("services-pane"),
   jobsPane: document.getElementById("jobs-pane"),
   generateBtn: document.getElementById("generate-btn"),
+  refreshRequestsBtn: document.getElementById("refresh-requests-btn"),
   meta: document.getElementById("meta"),
-  results: document.getElementById("results"),
+  requestsList: document.getElementById("requests-list"),
+  requestsEmpty: document.getElementById("requests-empty"),
   resultsError: document.getElementById("results-error"),
   globalError: document.getElementById("global-error"),
   statTotal: document.getElementById("stat-total"),
@@ -25,7 +27,22 @@ const els = {
   omdbStatus: document.getElementById("omdb-status"),
   tmdbResult: document.getElementById("tmdb-test-result"),
   omdbResult: document.getElementById("omdb-test-result"),
+  newJobBtn: document.getElementById("new-job-btn"),
+  refreshJobsBtn: document.getElementById("refresh-jobs-btn"),
+  jobsList: document.getElementById("jobs-list"),
+  jobsEmpty: document.getElementById("jobs-empty"),
+  jobModal: document.getElementById("job-modal"),
+  jobModalTitle: document.getElementById("job-modal-title"),
+  jobSaveBtn: document.getElementById("job-save-btn"),
+  jobModalError: document.getElementById("job-modal-error"),
+  jobName: document.getElementById("job-name"),
+  jobType: document.getElementById("job-type"),
+  jobSchedule: document.getElementById("job-schedule"),
+  jobMaxResults: document.getElementById("job-max-results"),
+  jobEnabled: document.getElementById("job-enabled"),
 };
+
+let editingJobId = null;
 
 const panes = {
   requests: els.requestsPane,
@@ -128,8 +145,12 @@ function showTab(name) {
   for (const btn of els.tabs.querySelectorAll(".tab")) {
     btn.classList.toggle("active", btn.dataset.tab === name);
   }
-  if (name === "requests") loadStats();
+  if (name === "requests") {
+    loadStats();
+    loadRequestHistory();
+  }
   if (name === "services") loadSettings();
+  if (name === "jobs") loadJobs();
 }
 
 // ----- Signed-in / signed-out shell -----
@@ -154,10 +175,17 @@ function renderSignedOut() {
 }
 
 // ----- Requests tab -----
-function showSkeletons() {
-  els.resultsError.hidden = true;
-  els.meta.textContent = "";
-  els.results.innerHTML = Array.from({ length: NUM_SKELETON_CARDS })
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function showSkeletonRequest() {
+  const skeleton = Array.from({ length: NUM_SKELETON_CARDS })
     .map(
       () => `
         <article class="skeleton">
@@ -171,26 +199,26 @@ function showSkeletons() {
         </article>`,
     )
     .join("");
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-function renderRecommendations({ recommendations, meta }) {
+  const pendingCard = `
+    <article class="request-card" id="pending-request">
+      <header class="request-card-header">
+        <h3 class="request-card-title">
+          <span>⚡ Generating recommendations…</span>
+        </h3>
+        <span class="request-card-time">just now</span>
+      </header>
+      <div class="cards">${skeleton}</div>
+    </article>`;
+  els.requestsEmpty.hidden = true;
   els.resultsError.hidden = true;
+  els.requestsList.insertAdjacentHTML("afterbegin", pendingCard);
+}
 
+function renderRecsGrid(recommendations) {
   if (!recommendations?.length) {
-    showResultsError("No recommendations returned. Try again in a moment.");
-    return;
+    return `<p class="muted">No recommendations in this run.</p>`;
   }
-
-  els.results.innerHTML = recommendations
+  return `<div class="cards">${recommendations
     .map((rec) => {
       const title = escapeHtml(rec.title);
       const year = escapeHtml(rec.year);
@@ -210,28 +238,68 @@ function renderRecommendations({ recommendations, meta }) {
         : cardInner;
       return `<article class="card">${wrapper}</article>`;
     })
-    .join("");
-
-  if (meta?.basedOnMovieCount) {
-    els.meta.textContent = `Based on ${meta.basedOnMovieCount} movies you've watched · model: ${meta.modelId ?? "unknown"}`;
-  }
+    .join("")}</div>`;
 }
 
-function showResultsError(message) {
-  els.results.innerHTML = "";
-  els.resultsError.textContent = message;
-  els.resultsError.hidden = false;
+function renderRequestCard(req) {
+  const time = req.runAt ? new Date(req.runAt * 1000).toLocaleString() : "—";
+  const label = req.jobName ?? "Manual run";
+  const isFailure = req.status === "failed";
+  const body = isFailure
+    ? `<div class="request-card-error">Failed: ${escapeHtml(
+        req.errorMessage ?? "unknown error",
+      )}</div>`
+    : renderRecsGrid(req.recommendations ?? []);
+
+  return `
+    <article class="request-card">
+      <header class="request-card-header">
+        <h3 class="request-card-title">
+          <span>${escapeHtml(label)}</span>
+        </h3>
+        <span class="request-card-time">${escapeHtml(time)}</span>
+      </header>
+      ${body}
+    </article>`;
+}
+
+function renderRequestHistory(requests) {
+  const pending = document.getElementById("pending-request");
+  if (pending) pending.remove();
+
+  if (!requests.length) {
+    els.requestsList.innerHTML = "";
+    els.requestsEmpty.hidden = false;
+    return;
+  }
+  els.requestsEmpty.hidden = true;
+  els.requestsList.innerHTML = requests.map(renderRequestCard).join("");
+}
+
+async function loadRequestHistory() {
+  try {
+    const data = await apiFetch("requests");
+    renderRequestHistory(data.recent ?? []);
+  } catch (err) {
+    els.resultsError.textContent = err.message;
+    els.resultsError.hidden = false;
+  }
 }
 
 async function onGenerate() {
   els.generateBtn.disabled = true;
   els.generateBtn.textContent = "Generating…";
-  showSkeletons();
+  showSkeletonRequest();
   try {
-    const data = await apiFetch("recommendations");
-    renderRecommendations(data);
+    await apiFetch("recommendations");
+    // Result was persisted server-side; refresh from history so the new run
+    // appears at the top alongside scheduled runs.
+    await Promise.all([loadStats(), loadRequestHistory()]);
   } catch (err) {
-    showResultsError(err.message ?? "Something went wrong.");
+    const pending = document.getElementById("pending-request");
+    if (pending) pending.remove();
+    els.resultsError.textContent = err.message ?? "Something went wrong.";
+    els.resultsError.hidden = false;
   } finally {
     els.generateBtn.disabled = false;
     els.generateBtn.textContent = "Get recommendations";
@@ -364,6 +432,166 @@ function wireServicesTab() {
   });
 }
 
+// ----- Jobs tab -----
+function formatDate(seconds) {
+  if (!seconds) return "—";
+  return new Date(seconds * 1000).toLocaleString();
+}
+
+function renderJobs(jobs) {
+  if (!jobs.length) {
+    els.jobsList.innerHTML = "";
+    els.jobsEmpty.hidden = false;
+    return;
+  }
+  els.jobsEmpty.hidden = true;
+
+  els.jobsList.innerHTML = jobs
+    .map((job) => {
+      const name = escapeHtml(job.name);
+      const typeLabel =
+        job.type === "DISCOVER" ? "🔍 DISCOVER" : "👥 RECOMMENDATION";
+      const typeClass =
+        job.type === "DISCOVER" ? "pill-discover" : "pill-recommendation";
+      const stateClass = job.enabled ? "pill-active" : "pill-disabled";
+      const stateLabel = job.enabled ? "● Active" : "○ Disabled";
+      const toggleLabel = job.enabled ? "⏸ Disable" : "▶ Enable";
+      return `
+        <article class="job-card" data-job-id="${escapeHtml(job.jobId)}">
+          <header class="job-card-header">
+            <h3 class="job-card-title">${name}</h3>
+            <span class="status-pill ${stateClass}">${stateLabel}</span>
+          </header>
+          <div class="job-card-pills">
+            <span class="pill ${typeClass}">${typeLabel}</span>
+          </div>
+          <dl class="job-card-meta">
+            <dt>⏰ Schedule</dt><dd>${escapeHtml(job.scheduleLabel ?? job.scheduleExpression)}</dd>
+            <dt>≡ Max Results</dt><dd>${escapeHtml(job.maxResults)}</dd>
+            <dt>📅 Last Run</dt><dd>${escapeHtml(formatDate(job.lastRunAt))}</dd>
+          </dl>
+          <div class="job-card-actions">
+            <button class="secondary-btn" data-job-action="run">⚡ Run</button>
+            <button class="secondary-btn" data-job-action="toggle">${toggleLabel}</button>
+            <button class="secondary-btn" data-job-action="edit">✎ Edit</button>
+            <button class="danger-btn" data-job-action="delete">🗑</button>
+          </div>
+        </article>`;
+    })
+    .join("");
+}
+
+let currentJobs = [];
+
+async function loadJobs() {
+  els.jobsList.innerHTML = `<div class="muted">Loading…</div>`;
+  try {
+    const { jobs } = await apiFetch("jobs");
+    currentJobs = jobs ?? [];
+    renderJobs(currentJobs);
+  } catch (err) {
+    els.jobsList.innerHTML = "";
+    els.jobsEmpty.hidden = true;
+    els.globalError.textContent = `Could not load jobs: ${err.message}`;
+    els.globalError.hidden = false;
+  }
+}
+
+function openJobModal(job) {
+  editingJobId = job?.jobId ?? null;
+  els.jobModalTitle.textContent = job ? "Edit Job" : "New Job";
+  els.jobSaveBtn.textContent = job ? "Save Changes" : "Create Job";
+  els.jobName.value = job?.name ?? "";
+  els.jobType.value = job?.type ?? "RECOMMENDATION";
+  els.jobSchedule.value = job
+    ? `${job.scheduleExpression}|${job.scheduleLabel ?? job.scheduleExpression}`
+    : els.jobSchedule.options[0].value;
+  els.jobMaxResults.value = job?.maxResults ?? 5;
+  els.jobEnabled.checked = job ? job.enabled : true;
+  els.jobModalError.hidden = true;
+  els.jobModal.hidden = false;
+}
+
+function closeJobModal() {
+  els.jobModal.hidden = true;
+  editingJobId = null;
+}
+
+async function saveJob() {
+  const [scheduleExpression, scheduleLabel] = els.jobSchedule.value.split("|");
+  const payload = {
+    name: els.jobName.value.trim() || "Untitled Job",
+    type: els.jobType.value,
+    scheduleExpression,
+    scheduleLabel,
+    maxResults: Number(els.jobMaxResults.value) || 5,
+    enabled: els.jobEnabled.checked,
+  };
+  els.jobSaveBtn.disabled = true;
+  els.jobSaveBtn.textContent = "Saving…";
+  try {
+    if (editingJobId) {
+      await apiFetch(`jobs/${editingJobId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    } else {
+      await apiFetch("jobs", { method: "POST", body: JSON.stringify(payload) });
+    }
+    closeJobModal();
+    await loadJobs();
+  } catch (err) {
+    els.jobModalError.textContent = err.message;
+    els.jobModalError.hidden = false;
+  } finally {
+    els.jobSaveBtn.disabled = false;
+    els.jobSaveBtn.textContent = editingJobId ? "Save Changes" : "Create Job";
+  }
+}
+
+async function onJobAction(jobId, action) {
+  const job = currentJobs.find((j) => j.jobId === jobId);
+  if (!job) return;
+  try {
+    if (action === "run") {
+      await apiFetch(`jobs/${jobId}/run`, { method: "POST" });
+      // Brief feedback; user can refresh stats / requests
+      alert("Run started. Results appear under Requests in a few seconds.");
+    } else if (action === "toggle") {
+      await apiFetch(`jobs/${jobId}`, {
+        method: "PUT",
+        body: JSON.stringify({ enabled: !job.enabled }),
+      });
+      await loadJobs();
+    } else if (action === "edit") {
+      openJobModal(job);
+    } else if (action === "delete") {
+      if (!confirm(`Delete job "${job.name}"? This cannot be undone.`)) return;
+      await apiFetch(`jobs/${jobId}`, { method: "DELETE" });
+      await loadJobs();
+    }
+  } catch (err) {
+    els.globalError.textContent = `Action failed: ${err.message}`;
+    els.globalError.hidden = false;
+  }
+}
+
+function wireJobsTab() {
+  els.newJobBtn.addEventListener("click", () => openJobModal(null));
+  els.refreshJobsBtn.addEventListener("click", () => loadJobs());
+  els.jobSaveBtn.addEventListener("click", saveJob);
+  document.querySelectorAll("[data-close-modal]").forEach((el) => {
+    el.addEventListener("click", closeJobModal);
+  });
+  els.jobsList.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-job-action]");
+    if (!btn) return;
+    const card = btn.closest("[data-job-id]");
+    if (!card) return;
+    onJobAction(card.dataset.jobId, btn.dataset.jobAction);
+  });
+}
+
 // ----- Init -----
 (async () => {
   try {
@@ -395,7 +623,12 @@ function wireServicesTab() {
     }
 
     els.generateBtn.addEventListener("click", onGenerate);
+    els.refreshRequestsBtn.addEventListener("click", () => {
+      loadStats();
+      loadRequestHistory();
+    });
     wireServicesTab();
+    wireJobsTab();
   } catch (err) {
     els.globalError.textContent = `Init failed: ${err.message}`;
     els.globalError.hidden = false;

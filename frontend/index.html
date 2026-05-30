@@ -80,10 +80,16 @@
           <button id="generate-btn" class="primary-btn">
             Get recommendations
           </button>
+          <button id="refresh-requests-btn" class="secondary-btn">
+            ⟳ Refresh
+          </button>
           <p id="meta" class="meta"></p>
         </div>
 
-        <div id="results" class="cards" aria-live="polite"></div>
+        <div id="requests-list" class="requests-list" aria-live="polite"></div>
+        <div id="requests-empty" class="jobs-empty" hidden>
+          <p>No requests yet — click "Get recommendations" or run a job.</p>
+        </div>
         <p id="results-error" class="error" hidden></p>
       </section>
 
@@ -190,23 +196,57 @@
         </div>
 
         <div class="jobs-toolbar">
-          <button class="primary-btn" disabled title="Coming Saturday">
-            + New Job
-          </button>
-          <button class="secondary-btn" disabled title="Coming Saturday">
-            ⟳ Refresh
-          </button>
-          <button class="icon-btn-square" title="Help">?</button>
+          <button class="primary-btn" id="new-job-btn">+ New Job</button>
+          <button class="secondary-btn" id="refresh-jobs-btn">⟳ Refresh</button>
         </div>
 
-        <div class="jobs-empty">
-          <p>No jobs yet — scheduled recommendations land tomorrow.</p>
-          <p class="muted">
-            The full Jobs CRUD with EventBridge-backed scheduling is the next
-            piece of work. The UI shell is here so you can see the layout.
-          </p>
+        <div id="jobs-list" class="jobs-list"></div>
+        <div id="jobs-empty" class="jobs-empty" hidden>
+          <p>No jobs yet — click "+ New Job" to create one.</p>
         </div>
       </section>
+
+      <div id="job-modal" class="modal" hidden>
+        <div class="modal-backdrop" data-close-modal></div>
+        <div class="modal-panel">
+          <header class="modal-header">
+            <h2 id="job-modal-title">New Job</h2>
+            <button class="icon-btn" data-close-modal title="Close">✕</button>
+          </header>
+          <div class="modal-body">
+            <label class="form-label" for="job-name">Name</label>
+            <input id="job-name" type="text" placeholder="Automatic Recommendations" />
+
+            <label class="form-label" for="job-type">Type</label>
+            <select id="job-type">
+              <option value="RECOMMENDATION">Recommendation (based on watch history)</option>
+              <option value="DISCOVER">Discover (TMDb filters — coming soon)</option>
+            </select>
+
+            <label class="form-label" for="job-schedule">Schedule</label>
+            <select id="job-schedule">
+              <option value="rate(1 day)|Daily">Daily</option>
+              <option value="rate(12 hours)|Twice daily">Twice daily</option>
+              <option value="rate(7 days)|Weekly">Weekly</option>
+              <option value="rate(1 hour)|Hourly">Hourly (testing)</option>
+              <option value="cron(0 0 * * ? *)|Daily at midnight UTC">Daily at midnight UTC</option>
+            </select>
+
+            <label class="form-label" for="job-max-results">Max Results</label>
+            <input id="job-max-results" type="number" value="5" min="1" max="50" />
+
+            <label class="checkbox-row">
+              <input id="job-enabled" type="checkbox" checked />
+              <span>Enabled (will run on schedule)</span>
+            </label>
+          </div>
+          <footer class="modal-footer">
+            <button class="secondary-btn" data-close-modal>Cancel</button>
+            <button id="job-save-btn" class="primary-btn">Create Job</button>
+          </footer>
+          <p id="job-modal-error" class="error" hidden></p>
+        </div>
+      </div>
 
       <p id="global-error" class="error" hidden></p>
     </main>

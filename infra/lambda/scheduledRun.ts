@@ -1,9 +1,9 @@
-import type { APIGatewayProxyHandler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
   BedrockRuntimeClient,
@@ -12,11 +12,12 @@ import {
 import { randomUUID } from 'node:crypto';
 
 const TABLE_NAME = process.env.TABLE_NAME!;
+const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
+const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
-const USER_ID = 'kyle';
-const NUM_RECOMMENDATIONS = 3;
+const FALLBACK_TMDB_KEY = process.env.TMDB_API_KEY;
+const WATCH_HISTORY_USER_ID = 'kyle';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const bedrock = new BedrockRuntimeClient({});
@@ -38,6 +39,21 @@ type EnrichedRecommendation = Recommendation & {
   tmdbId?: number;
   tmdbUrl?: string;
   posterUrl?: string;
+};
+
+type Job = {
+  userId: string;
+  jobId: string;
+  name: string;
+  type: 'RECOMMENDATION' | 'DISCOVER';
+  scheduleExpression: string;
+  maxResults: number;
+  enabled: boolean;
+};
+
+type ScheduledEvent = {
+  userId: string;
+  jobId: string;
 };
 
 const OUTPUT_TOOL = {
@@ -69,26 +85,25 @@ const OUTPUT_TOOL = {
   },
 } as const;
 
-const buildPrompt = (watched: WatchedMovie[]): string => {
-  const compact = watched.map((m) => ({
-    title: m.title,
-    year: m.year,
-    playCount: m.playCount,
-    completed: m.completed,
-  }));
-
-  return [
+const buildPrompt = (watched: WatchedMovie[], n: number): string =>
+  [
     "You recommend movies based on a user's watch history.",
     'Each entry has playCount (rewatches are strong positive signals) and completed',
     '(false suggests they bailed — weak negative signal).',
     '',
-    `Recommend exactly ${NUM_RECOMMENDATIONS} movies the user would likely enjoy but has not watched.`,
+    `Recommend exactly ${n} movies the user would likely enjoy but has not watched.`,
     'Vary genres and eras. Reasons should reference specific watched titles when possible.',
     '',
     'Watched movies (JSON):',
-    JSON.stringify(compact),
+    JSON.stringify(
+      watched.map((m) => ({
+        title: m.title,
+        year: m.year,
+        playCount: m.playCount,
+        completed: m.completed,
+      })),
+    ),
   ].join('\n');
-};
 
 const extractRecommendations = (
   content: Array<{ toolUse?: { input?: unknown }; text?: string }> | undefined,
@@ -97,7 +112,6 @@ const extractRecommendations = (
   const input = toolUse?.input as { recommendations?: Recommendation[] } | undefined;
   if (input?.recommendations?.length) return input.recommendations;
 
-  // Fallback: parse text content if the model returned text instead of using the tool.
   const text = content?.find((c) => c.text)?.text ?? '';
   const start = text.indexOf('[');
   const end = text.lastIndexOf(']');
@@ -113,17 +127,15 @@ const normalizeKey = (title: string, year: number): string =>
 
 const enrichWithTmdb = async (
   rec: Recommendation,
+  apiKey: string | undefined,
 ): Promise<EnrichedRecommendation> => {
-  if (!TMDB_API_KEY) return rec;
+  if (!apiKey) return rec;
   try {
     const url = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(
       rec.title,
     )}&year=${rec.year}`;
     const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${TMDB_API_KEY}`,
-        Accept: 'application/json',
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
     });
     if (!res.ok) return rec;
     const json = (await res.json()) as {
@@ -140,105 +152,114 @@ const enrichWithTmdb = async (
         : undefined,
     };
   } catch (err) {
-    console.error(`TMDB lookup failed for "${rec.title}" (${rec.year}):`, err);
+    console.error(`TMDB lookup failed for "${rec.title}":`, err);
     return rec;
   }
 };
 
-export const handler: APIGatewayProxyHandler = async (event) => {
-  // API Gateway's Cognito authorizer puts validated JWT claims here.
-  // For this demo we still look up the seeded 'kyle' record regardless of who
-  // authenticated — in production the partition key would be claims.sub.
-  const claims = (event.requestContext as unknown as {
-    authorizer?: { claims?: Record<string, string> };
-  }).authorizer?.claims;
+export const runJob = async (userId: string, jobId: string): Promise<void> => {
+  const jobRes = await ddb.send(
+    new GetCommand({ TableName: JOBS_TABLE_NAME, Key: { userId, jobId } }),
+  );
+  const job = jobRes.Item as Job | undefined;
+  if (!job) throw new Error(`Job not found: ${userId}/${jobId}`);
 
-  const watchHistoryRecord = await ddb.send(
+  const settingsRes = await ddb.send(
+    new GetCommand({
+      TableName: SETTINGS_TABLE_NAME,
+      Key: { userId },
+    }),
+  );
+  const userTmdbKey = (settingsRes.Item as { tmdbApiKey?: string } | undefined)
+    ?.tmdbApiKey;
+  const effectiveTmdbKey = userTmdbKey || FALLBACK_TMDB_KEY;
+
+  const historyRes = await ddb.send(
     new GetCommand({
       TableName: TABLE_NAME,
-      Key: { userId: USER_ID },
+      Key: { userId: WATCH_HISTORY_USER_ID },
     }),
   );
-
-  if (!watchHistoryRecord.Item) {
-    return {
-      statusCode: 404,
-      headers: {
-        'content-type': 'application/json',
-        'access-control-allow-origin': '*',
-      },
-      body: JSON.stringify({ error: 'No watch history found', userId: USER_ID }),
-    };
-  }
-
-  const watched = (watchHistoryRecord.Item.watchHistory ?? []) as WatchedMovie[];
+  const watched = (historyRes.Item?.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 
-  const bedrockResponse = await bedrock.send(
-    new ConverseCommand({
-      modelId: MODEL_ID,
-      messages: [{ role: 'user', content: [{ text: buildPrompt(watched) }] }],
-      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
-      toolConfig: {
-        tools: [{ toolSpec: OUTPUT_TOOL }],
-        toolChoice: { tool: { name: OUTPUT_TOOL.name } },
-      },
-    }),
-  );
-
-  const raw = extractRecommendations(
-    bedrockResponse.output?.message?.content as
-      | Array<{ toolUse?: { input?: unknown }; text?: string }>
-      | undefined,
-  );
-
-  const filtered = raw.filter(
-    (r) => !watchedKeys.has(normalizeKey(r.title, r.year)),
-  );
-
-  const enriched = await Promise.all(filtered.map(enrichWithTmdb));
-
-  const requestUserId = claims?.sub ?? USER_ID;
+  const requestId = randomUUID();
   const runAt = Math.floor(Date.now() / 1000);
-  const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 
   try {
+    const bedrockResponse = await bedrock.send(
+      new ConverseCommand({
+        modelId: MODEL_ID,
+        messages: [
+          { role: 'user', content: [{ text: buildPrompt(watched, job.maxResults) }] },
+        ],
+        inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
+        toolConfig: {
+          tools: [{ toolSpec: OUTPUT_TOOL }],
+          toolChoice: { tool: { name: OUTPUT_TOOL.name } },
+        },
+      }),
+    );
+
+    const raw = extractRecommendations(
+      bedrockResponse.output?.message?.content as
+        | Array<{ toolUse?: { input?: unknown }; text?: string }>
+        | undefined,
+    );
+    const filtered = raw.filter(
+      (r) => !watchedKeys.has(normalizeKey(r.title, r.year)),
+    );
+    const enriched = await Promise.all(
+      filtered.map((rec) => enrichWithTmdb(rec, effectiveTmdbKey)),
+    );
+
     await ddb.send(
       new PutCommand({
         TableName: REQUESTS_TABLE_NAME,
         Item: {
-          userId: requestUserId,
+          userId,
           requestId,
-          jobName: 'Manual run',
+          jobId,
+          jobName: job.name,
           runAt,
           status: 'success',
           recommendations: enriched,
           modelId: MODEL_ID,
-          basedOnMovieCount: watched.length,
         },
       }),
     );
-  } catch (err) {
-    console.error('Failed to persist manual run:', err);
-  }
 
-  return {
-    statusCode: 200,
-    headers: {
-      'content-type': 'application/json',
-      'access-control-allow-origin': '*',
-    },
-    body: JSON.stringify({
-      recommendations: enriched,
-      meta: {
-        userId: USER_ID,
-        authenticatedAs: claims?.email ?? null,
-        cognitoSub: claims?.sub ?? null,
-        basedOnMovieCount: watched.length,
-        modelId: MODEL_ID,
-        filteredOutCount: raw.length - filtered.length,
-        requestId,
-      },
-    }),
-  };
+    await ddb.send(
+      new UpdateCommand({
+        TableName: JOBS_TABLE_NAME,
+        Key: { userId, jobId },
+        UpdateExpression: 'SET lastRunAt = :t',
+        ExpressionAttributeValues: { ':t': runAt },
+      }),
+    );
+  } catch (err) {
+    console.error('Job run failed:', err);
+    await ddb.send(
+      new PutCommand({
+        TableName: REQUESTS_TABLE_NAME,
+        Item: {
+          userId,
+          requestId,
+          jobId,
+          jobName: job.name,
+          runAt,
+          status: 'failed',
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+      }),
+    );
+    throw err;
+  }
+};
+
+export const handler = async (event: ScheduledEvent): Promise<void> => {
+  if (!event.userId || !event.jobId) {
+    throw new Error('ScheduledRun requires { userId, jobId } payload');
+  }
+  await runJob(event.userId, event.jobId);
 };
