@@ -8,6 +8,7 @@ import {
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
+const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const USER_ID = 'kyle';
 const NUM_RECOMMENDATIONS = 3;
 
@@ -25,6 +26,12 @@ type Recommendation = {
   title: string;
   year: number;
   reason: string;
+};
+
+type EnrichedRecommendation = Recommendation & {
+  tmdbId?: number;
+  tmdbUrl?: string;
+  posterUrl?: string;
 };
 
 const buildPrompt = (watched: WatchedMovie[]): string => {
@@ -65,6 +72,40 @@ const parseRecommendations = (text: string): Recommendation[] => {
 const normalizeKey = (title: string, year: number): string =>
   `${title.toLowerCase().trim()}|${year}`;
 
+const enrichWithTmdb = async (
+  rec: Recommendation,
+): Promise<EnrichedRecommendation> => {
+  if (!TMDB_API_KEY) return rec;
+  try {
+    const url = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(
+      rec.title,
+    )}&year=${rec.year}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${TMDB_API_KEY}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) return rec;
+    const json = (await res.json()) as {
+      results?: Array<{ id: number; poster_path: string | null }>;
+    };
+    const first = json.results?.[0];
+    if (!first) return rec;
+    return {
+      ...rec,
+      tmdbId: first.id,
+      tmdbUrl: `https://www.themoviedb.org/movie/${first.id}`,
+      posterUrl: first.poster_path
+        ? `https://image.tmdb.org/t/p/w500${first.poster_path}`
+        : undefined,
+    };
+  } catch (err) {
+    console.error(`TMDB lookup failed for "${rec.title}" (${rec.year}):`, err);
+    return rec;
+  }
+};
+
 export const handler: APIGatewayProxyHandler = async () => {
   const watchHistoryRecord = await ddb.send(
     new GetCommand({
@@ -76,7 +117,10 @@ export const handler: APIGatewayProxyHandler = async () => {
   if (!watchHistoryRecord.Item) {
     return {
       statusCode: 404,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*',
+      },
       body: JSON.stringify({ error: 'No watch history found', userId: USER_ID }),
     };
   }
@@ -87,9 +131,7 @@ export const handler: APIGatewayProxyHandler = async () => {
   const bedrockResponse = await bedrock.send(
     new ConverseCommand({
       modelId: MODEL_ID,
-      messages: [
-        { role: 'user', content: [{ text: buildPrompt(watched) }] },
-      ],
+      messages: [{ role: 'user', content: [{ text: buildPrompt(watched) }] }],
       inferenceConfig: { maxTokens: 1024, temperature: 0.7 },
     }),
   );
@@ -97,20 +139,25 @@ export const handler: APIGatewayProxyHandler = async () => {
   const rawText = bedrockResponse.output?.message?.content?.[0]?.text ?? '';
   const raw = parseRecommendations(rawText);
 
-  const recommendations = raw.filter(
+  const filtered = raw.filter(
     (r) => !watchedKeys.has(normalizeKey(r.title, r.year)),
   );
 
+  const enriched = await Promise.all(filtered.map(enrichWithTmdb));
+
   return {
     statusCode: 200,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'access-control-allow-origin': '*',
+    },
     body: JSON.stringify({
-      recommendations,
+      recommendations: enriched,
       meta: {
         userId: USER_ID,
         basedOnMovieCount: watched.length,
         modelId: MODEL_ID,
-        filteredOutCount: raw.length - recommendations.length,
+        filteredOutCount: raw.length - filtered.length,
       },
     }),
   };

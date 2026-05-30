@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Movie Recommender</title>
+    <link rel="preconnect" href="https://image.tmdb.org" crossorigin />
+    <link rel="stylesheet" href="style.css" />
+    <script src="config.json" type="application/json" id="app-config"></script>
+  </head>
+  <body>
+    <main class="container">
+      <header class="hero">
+        <h1>AI Movie Recommender</h1>
+        <p class="subtitle">
+          Personalized picks generated from your Plex watch history by Amazon
+          Nova Micro on Bedrock.
+        </p>
+        <button id="generate-btn" class="primary-btn">
+          Get recommendations
+        </button>
+        <p id="meta" class="meta"></p>
+      </header>
+
+      <section id="results" class="cards" aria-live="polite"></section>
+
+      <p id="error" class="error" hidden></p>
+    </main>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
