@@ -499,13 +499,17 @@ function renderJobs(jobs) {
 let currentJobs = [];
 
 async function loadJobs() {
-  els.jobsList.innerHTML = `<div class="muted">Loading…</div>`;
+  // Only show the placeholder if we have nothing on screen yet; otherwise
+  // leave existing cards visible until fresh data arrives.
+  if (!currentJobs.length) {
+    els.jobsList.innerHTML = `<div class="muted">Loading…</div>`;
+  }
   try {
     const { jobs } = await apiFetch("jobs");
     currentJobs = jobs ?? [];
     renderJobs(currentJobs);
   } catch (err) {
-    els.jobsList.innerHTML = "";
+    if (!currentJobs.length) els.jobsList.innerHTML = "";
     els.jobsEmpty.hidden = true;
     els.globalError.textContent = `Could not load jobs: ${err.message}`;
     els.globalError.hidden = false;
@@ -570,20 +574,38 @@ async function onJobAction(jobId, action) {
   try {
     if (action === "run") {
       await apiFetch(`jobs/${jobId}/run`, { method: "POST" });
-      // Brief feedback; user can refresh stats / requests
       alert("Run started. Results appear under Requests in a few seconds.");
     } else if (action === "toggle") {
-      await apiFetch(`jobs/${jobId}`, {
-        method: "PUT",
-        body: JSON.stringify({ enabled: !job.enabled }),
-      });
-      await loadJobs();
+      // Optimistic update: flip locally and re-render immediately so the card
+      // never disappears. Revert if the backend call fails.
+      const prev = job.enabled;
+      job.enabled = !prev;
+      renderJobs(currentJobs);
+      try {
+        await apiFetch(`jobs/${jobId}`, {
+          method: "PUT",
+          body: JSON.stringify({ enabled: job.enabled }),
+        });
+      } catch (err) {
+        job.enabled = prev;
+        renderJobs(currentJobs);
+        throw err;
+      }
     } else if (action === "edit") {
       openJobModal(job);
     } else if (action === "delete") {
       if (!confirm(`Delete job "${job.name}"? This cannot be undone.`)) return;
-      await apiFetch(`jobs/${jobId}`, { method: "DELETE" });
-      await loadJobs();
+      // Optimistic removal — drop from the array, re-render, then sync.
+      const prevJobs = currentJobs.slice();
+      currentJobs = currentJobs.filter((j) => j.jobId !== jobId);
+      renderJobs(currentJobs);
+      try {
+        await apiFetch(`jobs/${jobId}`, { method: "DELETE" });
+      } catch (err) {
+        currentJobs = prevJobs;
+        renderJobs(currentJobs);
+        throw err;
+      }
     }
   } catch (err) {
     els.globalError.textContent = `Action failed: ${err.message}`;
