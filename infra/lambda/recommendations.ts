@@ -66,7 +66,10 @@ const parseRecommendations = (text: string): Recommendation[] => {
   if (start === -1 || end === -1) {
     throw new Error(`Model response had no JSON array: ${text.slice(0, 200)}`);
   }
-  return JSON.parse(text.slice(start, end + 1));
+  // Strip trailing commas before closing brackets — LLMs sometimes emit them,
+  // which JSON.parse rejects.
+  const cleaned = text.slice(start, end + 1).replace(/,(\s*[\]}])/g, '$1');
+  return JSON.parse(cleaned);
 };
 
 const normalizeKey = (title: string, year: number): string =>
