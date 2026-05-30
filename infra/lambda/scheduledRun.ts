@@ -3,6 +3,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  QueryCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
@@ -137,7 +138,7 @@ const callBedrock = async (prompt: string): Promise<Recommendation[]> => {
     new ConverseCommand({
       modelId: MODEL_ID,
       messages: [{ role: 'user', content: [{ text: prompt }] }],
-      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
+      inferenceConfig: { maxTokens: 2048, temperature: 0.9, topP: 0.95 },
       toolConfig: {
         tools: [{ toolSpec: OUTPUT_TOOL }],
         toolChoice: { tool: { name: OUTPUT_TOOL.name } },
@@ -161,6 +162,32 @@ const applyFilter = (
     seen.add(key);
     return true;
   });
+
+const getRecentRecommendedTitles = async (
+  userId: string,
+  recentRuns = 10,
+): Promise<string[]> => {
+  try {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: REQUESTS_TABLE_NAME,
+        KeyConditionExpression: 'userId = :u',
+        ExpressionAttributeValues: { ':u': userId },
+        ScanIndexForward: false,
+        Limit: recentRuns,
+      }),
+    );
+    const titles = new Set<string>();
+    for (const item of res.Items ?? []) {
+      const recs = (item as { recommendations?: Recommendation[] }).recommendations ?? [];
+      for (const r of recs) titles.add(`${r.title} (${r.year})`);
+    }
+    return Array.from(titles);
+  } catch (err) {
+    console.warn('Could not load recent recommended titles:', err);
+    return [];
+  }
+};
 
 const extractRecommendations = (
   content: Array<{ toolUse?: { input?: unknown }; text?: string }> | undefined,
@@ -244,14 +271,21 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
   const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 
   try {
+    const recentTitles = await getRecentRecommendedTitles(userId, 10);
+
     const seen = new Set(watchedKeys);
     let attempts = 1;
-    const raw = await callBedrock(buildPrompt(watched, job.maxResults));
+    const raw = await callBedrock(
+      buildPrompt(watched, job.maxResults, recentTitles),
+    );
     let filtered = applyFilter(raw, seen);
 
     if (filtered.length === 0 && raw.length > 0) {
       attempts = 2;
-      const exclude = raw.map((r) => `${r.title} (${r.year})`);
+      const exclude = [
+        ...recentTitles,
+        ...raw.map((r) => `${r.title} (${r.year})`),
+      ];
       const retryRaw = await callBedrock(
         buildPrompt(watched, job.maxResults, exclude),
       );

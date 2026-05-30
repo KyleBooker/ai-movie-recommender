@@ -4,6 +4,7 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
   BedrockRuntimeClient,
@@ -121,7 +122,7 @@ const callBedrock = async (prompt: string): Promise<Recommendation[]> => {
     new ConverseCommand({
       modelId: MODEL_ID,
       messages: [{ role: 'user', content: [{ text: prompt }] }],
-      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
+      inferenceConfig: { maxTokens: 2048, temperature: 0.9, topP: 0.95 },
       toolConfig: {
         tools: [{ toolSpec: OUTPUT_TOOL }],
         toolChoice: { tool: { name: OUTPUT_TOOL.name } },
@@ -145,6 +146,32 @@ const applyFilter = (
     seen.add(key);
     return true;
   });
+
+const getRecentRecommendedTitles = async (
+  userId: string,
+  recentRuns = 10,
+): Promise<string[]> => {
+  try {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: REQUESTS_TABLE_NAME,
+        KeyConditionExpression: 'userId = :u',
+        ExpressionAttributeValues: { ':u': userId },
+        ScanIndexForward: false,
+        Limit: recentRuns,
+      }),
+    );
+    const titles = new Set<string>();
+    for (const item of res.Items ?? []) {
+      const recs = (item as { recommendations?: Recommendation[] }).recommendations ?? [];
+      for (const r of recs) titles.add(`${r.title} (${r.year})`);
+    }
+    return Array.from(titles);
+  } catch (err) {
+    console.warn('Could not load recent recommended titles:', err);
+    return [];
+  }
+};
 
 const extractRecommendations = (
   content: Array<{ toolUse?: { input?: unknown }; text?: string }> | undefined,
@@ -230,9 +257,12 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   const watched = (watchHistoryRecord.Item.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 
+  const requestUserId = claims?.sub ?? USER_ID;
+  const recentTitles = await getRecentRecommendedTitles(requestUserId, 10);
+
   const seen = new Set(watchedKeys);
   let attempts = 1;
-  const raw = await callBedrock(buildPrompt(watched));
+  const raw = await callBedrock(buildPrompt(watched, recentTitles));
   let filtered = applyFilter(raw, seen);
 
   // If the first attempt produced nothing usable (everything was already
@@ -240,14 +270,13 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   // model can't repeat the same picks.
   if (filtered.length === 0 && raw.length > 0) {
     attempts = 2;
-    const exclude = raw.map((r) => `${r.title} (${r.year})`);
+    const exclude = [...recentTitles, ...raw.map((r) => `${r.title} (${r.year})`)];
     const retryRaw = await callBedrock(buildPrompt(watched, exclude));
     filtered = applyFilter(retryRaw, seen);
   }
 
   const enriched = await Promise.all(filtered.map(enrichWithTmdb));
 
-  const requestUserId = claims?.sub ?? USER_ID;
   const runAt = Math.floor(Date.now() / 1000);
   const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 

@@ -73,7 +73,7 @@ export class InfraStack extends cdk.Stack {
       bundling: { externalModules: ['@aws-sdk/*'] },
     });
     watchHistory.grantReadData(recommendationsFn);
-    requests.grantWriteData(recommendationsFn);
+    requests.grantReadWriteData(recommendationsFn);
     recommendationsFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel'],
@@ -99,7 +99,7 @@ export class InfraStack extends cdk.Stack {
     });
     watchHistory.grantReadData(scheduledRunFn);
     jobs.grantReadWriteData(scheduledRunFn);
-    requests.grantWriteData(scheduledRunFn);
+    requests.grantReadWriteData(scheduledRunFn);
     userSettings.grantReadData(scheduledRunFn);
     scheduledRunFn.addToRolePolicy(
       new iam.PolicyStatement({
