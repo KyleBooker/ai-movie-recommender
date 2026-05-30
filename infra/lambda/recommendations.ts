@@ -71,7 +71,10 @@ const OUTPUT_TOOL = {
   },
 } as const;
 
-const buildPrompt = (watched: WatchedMovie[]): string => {
+const buildPrompt = (
+  watched: WatchedMovie[],
+  exclude: string[] = [],
+): string => {
   const compact = watched.map((m) => ({
     title: m.title,
     year: m.year,
@@ -79,18 +82,69 @@ const buildPrompt = (watched: WatchedMovie[]): string => {
     completed: m.completed,
   }));
 
-  return [
-    "You recommend movies based on a user's watch history.",
-    'Each entry has playCount (rewatches are strong positive signals) and completed',
-    '(false suggests they bailed — weak negative signal).',
+  const watchedTitles = watched.map((m) => `${m.title} (${m.year})`);
+
+  const lines = [
+    'You recommend movies for a user. Use their watch history as a taste signal:',
+    'playCount indicates favorites/rewatches; completed=false suggests they bailed.',
     '',
-    `Recommend exactly ${NUM_RECOMMENDATIONS} movies the user would likely enjoy but has not watched.`,
-    'Vary genres and eras. Reasons should reference specific watched titles when possible.',
+    'CRITICAL RULES:',
+    '1. NEVER recommend any movie that appears in the EXCLUSION LIST below. The',
+    '   user has already seen those.',
+    `2. Recommend exactly ${NUM_RECOMMENDATIONS} DISTINCT movies that are NOT in the exclusion list.`,
+    '3. No duplicates — each recommendation must be a different film.',
+    '4. Vary genres and eras. Reasons should reference specific watched titles',
+    '   when possible.',
     '',
-    'Watched movies (JSON):',
+    'EXCLUSION LIST — these are already watched, do NOT recommend any of them:',
+    watchedTitles.join('; '),
+  ];
+
+  if (exclude.length) {
+    lines.push(
+      '',
+      'ALSO do NOT recommend (already considered in a prior attempt):',
+      exclude.join('; '),
+    );
+  }
+
+  lines.push(
+    '',
+    'Taste signals (rich data for inferring preferences):',
     JSON.stringify(compact),
-  ].join('\n');
+  );
+  return lines.join('\n');
 };
+
+const callBedrock = async (prompt: string): Promise<Recommendation[]> => {
+  const response = await bedrock.send(
+    new ConverseCommand({
+      modelId: MODEL_ID,
+      messages: [{ role: 'user', content: [{ text: prompt }] }],
+      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
+      toolConfig: {
+        tools: [{ toolSpec: OUTPUT_TOOL }],
+        toolChoice: { tool: { name: OUTPUT_TOOL.name } },
+      },
+    }),
+  );
+  return extractRecommendations(
+    response.output?.message?.content as
+      | Array<{ toolUse?: { input?: unknown }; text?: string }>
+      | undefined,
+  );
+};
+
+const applyFilter = (
+  raw: Recommendation[],
+  seen: Set<string>,
+): Recommendation[] =>
+  raw.filter((r) => {
+    const key = normalizeKey(r.title, r.year);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
 const extractRecommendations = (
   content: Array<{ toolUse?: { input?: unknown }; text?: string }> | undefined,
@@ -176,27 +230,20 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   const watched = (watchHistoryRecord.Item.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 
-  const bedrockResponse = await bedrock.send(
-    new ConverseCommand({
-      modelId: MODEL_ID,
-      messages: [{ role: 'user', content: [{ text: buildPrompt(watched) }] }],
-      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
-      toolConfig: {
-        tools: [{ toolSpec: OUTPUT_TOOL }],
-        toolChoice: { tool: { name: OUTPUT_TOOL.name } },
-      },
-    }),
-  );
+  const seen = new Set(watchedKeys);
+  let attempts = 1;
+  const raw = await callBedrock(buildPrompt(watched));
+  let filtered = applyFilter(raw, seen);
 
-  const raw = extractRecommendations(
-    bedrockResponse.output?.message?.content as
-      | Array<{ toolUse?: { input?: unknown }; text?: string }>
-      | undefined,
-  );
-
-  const filtered = raw.filter(
-    (r) => !watchedKeys.has(normalizeKey(r.title, r.year)),
-  );
+  // If the first attempt produced nothing usable (everything was already
+  // watched or de-duped), retry once with an explicit exclusion list so the
+  // model can't repeat the same picks.
+  if (filtered.length === 0 && raw.length > 0) {
+    attempts = 2;
+    const exclude = raw.map((r) => `${r.title} (${r.year})`);
+    const retryRaw = await callBedrock(buildPrompt(watched, exclude));
+    filtered = applyFilter(retryRaw, seen);
+  }
 
   const enriched = await Promise.all(filtered.map(enrichWithTmdb));
 
@@ -235,6 +282,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         basedOnMovieCount: watched.length,
         modelId: MODEL_ID,
         filteredOutCount: raw.length - filtered.length,
+        attempts,
         requestId,
       },
     }),

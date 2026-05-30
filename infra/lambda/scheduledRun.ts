@@ -87,25 +87,80 @@ const OUTPUT_TOOL = {
   },
 } as const;
 
-const buildPrompt = (watched: WatchedMovie[], n: number): string =>
-  [
-    "You recommend movies based on a user's watch history.",
-    'Each entry has playCount (rewatches are strong positive signals) and completed',
-    '(false suggests they bailed — weak negative signal).',
+const buildPrompt = (
+  watched: WatchedMovie[],
+  n: number,
+  exclude: string[] = [],
+): string => {
+  const watchedTitles = watched.map((m) => `${m.title} (${m.year})`);
+  const compact = watched.map((m) => ({
+    title: m.title,
+    year: m.year,
+    playCount: m.playCount,
+    completed: m.completed,
+  }));
+
+  const lines = [
+    'You recommend movies for a user. Use their watch history as a taste signal:',
+    'playCount indicates favorites/rewatches; completed=false suggests they bailed.',
     '',
-    `Recommend exactly ${n} movies the user would likely enjoy but has not watched.`,
-    'Vary genres and eras. Reasons should reference specific watched titles when possible.',
+    'CRITICAL RULES:',
+    '1. NEVER recommend any movie that appears in the EXCLUSION LIST below. The',
+    '   user has already seen those.',
+    `2. Recommend exactly ${n} DISTINCT movies that are NOT in the exclusion list.`,
+    '3. No duplicates — each recommendation must be a different film.',
+    '4. Vary genres and eras. Reasons should reference specific watched titles',
+    '   when possible.',
     '',
-    'Watched movies (JSON):',
-    JSON.stringify(
-      watched.map((m) => ({
-        title: m.title,
-        year: m.year,
-        playCount: m.playCount,
-        completed: m.completed,
-      })),
-    ),
-  ].join('\n');
+    'EXCLUSION LIST — these are already watched, do NOT recommend any of them:',
+    watchedTitles.join('; '),
+  ];
+
+  if (exclude.length) {
+    lines.push(
+      '',
+      'ALSO do NOT recommend (already considered in a prior attempt):',
+      exclude.join('; '),
+    );
+  }
+
+  lines.push(
+    '',
+    'Taste signals (rich data for inferring preferences):',
+    JSON.stringify(compact),
+  );
+  return lines.join('\n');
+};
+
+const callBedrock = async (prompt: string): Promise<Recommendation[]> => {
+  const response = await bedrock.send(
+    new ConverseCommand({
+      modelId: MODEL_ID,
+      messages: [{ role: 'user', content: [{ text: prompt }] }],
+      inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
+      toolConfig: {
+        tools: [{ toolSpec: OUTPUT_TOOL }],
+        toolChoice: { tool: { name: OUTPUT_TOOL.name } },
+      },
+    }),
+  );
+  return extractRecommendations(
+    response.output?.message?.content as
+      | Array<{ toolUse?: { input?: unknown }; text?: string }>
+      | undefined,
+  );
+};
+
+const applyFilter = (
+  raw: Recommendation[],
+  seen: Set<string>,
+): Recommendation[] =>
+  raw.filter((r) => {
+    const key = normalizeKey(r.title, r.year);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
 const extractRecommendations = (
   content: Array<{ toolUse?: { input?: unknown }; text?: string }> | undefined,
@@ -189,28 +244,20 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
   const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 
   try {
-    const bedrockResponse = await bedrock.send(
-      new ConverseCommand({
-        modelId: MODEL_ID,
-        messages: [
-          { role: 'user', content: [{ text: buildPrompt(watched, job.maxResults) }] },
-        ],
-        inferenceConfig: { maxTokens: 2048, temperature: 0.7 },
-        toolConfig: {
-          tools: [{ toolSpec: OUTPUT_TOOL }],
-          toolChoice: { tool: { name: OUTPUT_TOOL.name } },
-        },
-      }),
-    );
+    const seen = new Set(watchedKeys);
+    let attempts = 1;
+    const raw = await callBedrock(buildPrompt(watched, job.maxResults));
+    let filtered = applyFilter(raw, seen);
 
-    const raw = extractRecommendations(
-      bedrockResponse.output?.message?.content as
-        | Array<{ toolUse?: { input?: unknown }; text?: string }>
-        | undefined,
-    );
-    const filtered = raw.filter(
-      (r) => !watchedKeys.has(normalizeKey(r.title, r.year)),
-    );
+    if (filtered.length === 0 && raw.length > 0) {
+      attempts = 2;
+      const exclude = raw.map((r) => `${r.title} (${r.year})`);
+      const retryRaw = await callBedrock(
+        buildPrompt(watched, job.maxResults, exclude),
+      );
+      filtered = applyFilter(retryRaw, seen);
+    }
+
     const enriched = await Promise.all(
       filtered.map((rec) => enrichWithTmdb(rec, effectiveTmdbKey)),
     );
@@ -227,6 +274,7 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
           status: 'success',
           recommendations: enriched,
           modelId: MODEL_ID,
+          attempts,
         },
       }),
     );
