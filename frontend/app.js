@@ -453,6 +453,19 @@ function formatDate(seconds) {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+const svg = (paths, cls = "meta-icon") =>
+  `<svg class="${cls}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
+
+const ICON_CLOCK = svg(`<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>`);
+const ICON_LIST = svg(`<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>`);
+const ICON_CALENDAR = svg(`<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>`);
+
+const ICON_BOLT = svg(`<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>`, "btn-icon");
+const ICON_PAUSE = svg(`<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>`, "btn-icon");
+const ICON_PLAY = svg(`<polygon points="5 3 19 12 5 21 5 3"/>`, "btn-icon");
+const ICON_EDIT = svg(`<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>`, "btn-icon");
+const ICON_TRASH = svg(`<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`, "btn-icon");
+
 function renderJobs(jobs) {
   if (!jobs.length) {
     els.jobsList.innerHTML = "";
@@ -470,7 +483,8 @@ function renderJobs(jobs) {
         job.type === "DISCOVER" ? "pill-discover" : "pill-recommendation";
       const stateClass = job.enabled ? "pill-active" : "pill-disabled";
       const stateLabel = job.enabled ? "● Active" : "○ Disabled";
-      const toggleLabel = job.enabled ? "⏸ Disable" : "▶ Enable";
+      const toggleIcon = job.enabled ? ICON_PAUSE : ICON_PLAY;
+      const toggleText = job.enabled ? "Disable" : "Enable";
       return `
         <article class="job-card" data-job-id="${escapeHtml(job.jobId)}">
           <header class="job-card-header">
@@ -481,15 +495,18 @@ function renderJobs(jobs) {
             <span class="pill ${typeClass}">${typeLabel}</span>
           </div>
           <dl class="job-card-meta">
-            <dt>⏰ Schedule</dt><dd>${escapeHtml(job.scheduleLabel ?? job.scheduleExpression)}</dd>
-            <dt>≡ Max Results</dt><dd>${escapeHtml(job.maxResults)}</dd>
-            <dt>📅 Last Run</dt><dd>${escapeHtml(formatDate(job.lastRunAt))}</dd>
+            <dt>${ICON_CLOCK}<span>Schedule</span></dt>
+            <dd>${escapeHtml(job.scheduleLabel ?? job.scheduleExpression)}</dd>
+            <dt>${ICON_LIST}<span>Max Results</span></dt>
+            <dd>${escapeHtml(job.maxResults)}</dd>
+            <dt>${ICON_CALENDAR}<span>Last Run</span></dt>
+            <dd>${escapeHtml(formatDate(job.lastRunAt))}</dd>
           </dl>
           <div class="job-card-actions">
-            <button class="secondary-btn" data-job-action="run">⚡ Run</button>
-            <button class="secondary-btn" data-job-action="toggle">${toggleLabel}</button>
-            <button class="secondary-btn" data-job-action="edit">✎ Edit</button>
-            <button class="danger-btn" data-job-action="delete">🗑</button>
+            <button class="secondary-btn" data-job-action="run">${ICON_BOLT}<span>Run</span></button>
+            <button class="secondary-btn" data-job-action="toggle">${toggleIcon}<span>${toggleText}</span></button>
+            <button class="secondary-btn" data-job-action="edit">${ICON_EDIT}<span>Edit</span></button>
+            <button class="danger-btn" data-job-action="delete">${ICON_TRASH}</button>
           </div>
         </article>`;
     })

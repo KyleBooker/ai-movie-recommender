@@ -626,20 +626,41 @@ input[type="password"]:focus {
   padding: 0.85rem 1rem;
   display: grid;
   grid-template-columns: 1fr auto;
-  row-gap: 0.45rem;
+  row-gap: 0.55rem;
   column-gap: 1rem;
   font-size: 0.9rem;
+  align-items: center;
 }
 
 .job-card-meta dt {
-  color: var(--text-dim);
+  color: var(--text);
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 
 .job-card-meta dd {
   color: var(--text);
   margin: 0;
   text-align: right;
+}
+
+.meta-icon {
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.btn-icon {
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.job-card-actions .secondary-btn,
+.job-card-actions .danger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .job-card-actions {
