@@ -33,6 +33,12 @@ export class InfraStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    const userSettings = new dynamodb.Table(this, 'UserSettings', {
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     const modelId = 'amazon.nova-micro-v1:0';
 
     const recommendationsFn = new NodejsFunction(this, 'RecommendationsFn', {
@@ -58,6 +64,21 @@ export class InfraStack extends cdk.Stack {
         resources: [`arn:aws:bedrock:${this.region}::foundation-model/${modelId}`],
       }),
     );
+
+    const apiFn = new NodejsFunction(this, 'ApiFn', {
+      entry: path.join(__dirname, '..', 'lambda', 'api.ts'),
+      runtime: lambda.Runtime.NODEJS_22_X,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 256,
+      environment: {
+        SETTINGS_TABLE_NAME: userSettings.tableName,
+      },
+      bundling: {
+        externalModules: ['@aws-sdk/*'],
+      },
+    });
+
+    userSettings.grantReadWriteData(apiFn);
 
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -131,12 +152,26 @@ export class InfraStack extends cdk.Stack {
       },
     });
 
+    const authedMethod = {
+      authorizer,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
+    };
+
     api.root
       .addResource('recommendations')
-      .addMethod('GET', new apigateway.LambdaIntegration(recommendationsFn), {
-        authorizer,
-        authorizationType: apigateway.AuthorizationType.COGNITO,
-      });
+      .addMethod('GET', new apigateway.LambdaIntegration(recommendationsFn), authedMethod);
+
+    const apiIntegration = new apigateway.LambdaIntegration(apiFn);
+
+    const settings = api.root.addResource('settings');
+    settings.addMethod('GET', apiIntegration, authedMethod);
+    settings.addMethod('PUT', apiIntegration, authedMethod);
+
+    const settingsTest = settings.addResource('test');
+    settingsTest.addResource('tmdb').addMethod('POST', apiIntegration, authedMethod);
+    settingsTest.addResource('omdb').addMethod('POST', apiIntegration, authedMethod);
+
+    api.root.addResource('requests').addMethod('GET', apiIntegration, authedMethod);
 
     new s3deploy.BucketDeployment(this, 'DeployFrontend', {
       sources: [

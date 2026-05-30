@@ -8,31 +8,207 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon">🎬</span>
+        <span class="brand-name">AI Movie Recommender</span>
+      </div>
+      <nav id="tabs" class="tabs" hidden>
+        <button class="tab" data-tab="requests">
+          <span class="tab-icon">✈</span>
+          Requests
+        </button>
+        <button class="tab" data-tab="services">
+          <span class="tab-icon">🔌</span>
+          Services
+        </button>
+        <button class="tab" data-tab="jobs">
+          <span class="tab-icon">💼</span>
+          Jobs
+        </button>
+      </nav>
+      <div id="auth-area" class="auth-area">
+        <span id="user-line" class="user-line"></span>
+        <button id="signin-btn" class="primary-btn" hidden>Sign in</button>
+        <button id="signout-btn" class="secondary-btn" hidden>Sign out</button>
+      </div>
+    </header>
+
     <main class="container">
-      <header class="hero">
+      <section id="signed-out-pane" class="signed-out" hidden>
         <h1>AI Movie Recommender</h1>
         <p class="subtitle">
           Personalized picks generated from your Plex watch history by Amazon
           Nova Micro on Bedrock.
         </p>
+        <p class="muted">Sign in to get started.</p>
+      </section>
 
-        <div id="auth-area">
-          <button id="signin-btn" class="primary-btn" hidden>Sign in</button>
-          <button id="generate-btn" class="primary-btn" hidden>
-            Get recommendations
-          </button>
-          <button id="signout-btn" class="secondary-btn" hidden>
-            Sign out
-          </button>
+      <section id="requests-pane" class="pane" hidden>
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="stat-icon stat-icon-gray">✈</div>
+            <div class="stat-content">
+              <div class="stat-value" id="stat-total">—</div>
+              <div class="stat-label">Total Requests</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon stat-icon-blue">📅</div>
+            <div class="stat-content">
+              <div class="stat-value" id="stat-today">—</div>
+              <div class="stat-label">Today</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon stat-icon-green">📅</div>
+            <div class="stat-content">
+              <div class="stat-value" id="stat-week">—</div>
+              <div class="stat-label">This Week</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon stat-icon-purple">📅</div>
+            <div class="stat-content">
+              <div class="stat-value" id="stat-month">—</div>
+              <div class="stat-label">This Month</div>
+            </div>
+          </div>
         </div>
 
-        <p id="user-line" class="meta"></p>
-        <p id="meta" class="meta"></p>
-      </header>
+        <div class="pane-toolbar">
+          <button id="generate-btn" class="primary-btn">
+            Get recommendations
+          </button>
+          <p id="meta" class="meta"></p>
+        </div>
 
-      <section id="results" class="cards" aria-live="polite"></section>
+        <div id="results" class="cards" aria-live="polite"></div>
+        <p id="results-error" class="error" hidden></p>
+      </section>
 
-      <p id="error" class="error" hidden></p>
+      <section id="services-pane" class="pane" hidden>
+        <header class="pane-header">
+          <h1>Service Configuration</h1>
+          <p class="subtitle">Configure external service connections</p>
+        </header>
+
+        <div class="service-grid">
+          <article class="service-card">
+            <header class="service-card-header">
+              <h2><span class="service-icon">🎞</span> TMDB API</h2>
+              <span id="tmdb-status" class="status-pill status-unknown">
+                <span class="status-dot"></span> Checking…
+              </span>
+            </header>
+            <label class="form-label" for="tmdb-key">API Key</label>
+            <div class="input-row">
+              <input
+                id="tmdb-key"
+                type="password"
+                placeholder="Enter your TMDB v4 bearer token"
+                autocomplete="off"
+              />
+              <button class="icon-btn" data-toggle="tmdb-key" title="Show/hide">
+                👁
+              </button>
+            </div>
+            <p class="form-help">
+              Get one from
+              <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer">
+                TMDB Settings</a>.
+            </p>
+            <div class="card-actions">
+              <button class="primary-btn full" data-action="save-tmdb">
+                Save
+              </button>
+              <button class="secondary-btn full" data-action="test-tmdb">
+                🔌 Test Connection
+              </button>
+            </div>
+            <p id="tmdb-test-result" class="test-result" hidden></p>
+          </article>
+
+          <article class="service-card">
+            <header class="service-card-header">
+              <h2><span class="service-icon">★</span> IMDB (via OMDb)</h2>
+              <span id="omdb-status" class="status-pill status-unknown">
+                <span class="status-dot"></span> Checking…
+              </span>
+            </header>
+            <label class="form-label" for="omdb-key">API Key</label>
+            <div class="input-row">
+              <input
+                id="omdb-key"
+                type="password"
+                placeholder="Enter your OMDb API key (optional)"
+                autocomplete="off"
+              />
+              <button class="icon-btn" data-toggle="omdb-key" title="Show/hide">
+                👁
+              </button>
+            </div>
+            <p class="form-help">
+              Optional — used when rating source is IMDb. Free key (1,000 req/day) at
+              <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer">
+                omdbapi.com</a>.
+            </p>
+            <div class="card-actions">
+              <button class="primary-btn full" data-action="save-omdb">
+                Save
+              </button>
+              <button class="secondary-btn full" data-action="test-omdb">
+                🔌 Test Connection
+              </button>
+            </div>
+            <p id="omdb-test-result" class="test-result" hidden></p>
+          </article>
+        </div>
+      </section>
+
+      <section id="jobs-pane" class="pane" hidden>
+        <header class="pane-header">
+          <h1>Jobs</h1>
+          <p class="subtitle">
+            Configure automated content discovery and recommendations
+          </p>
+        </header>
+
+        <div class="info-banner">
+          <span class="info-icon">ℹ</span>
+          <div>
+            <div class="info-title">Two Types of Jobs</div>
+            <div class="info-row">
+              <span class="pill pill-discover">🔍 DISCOVER</span>
+              Find content using TMDb filters (genre, rating, year)
+            </div>
+            <div class="info-row">
+              <span class="pill pill-recommendation">👥 RECOMMENDATION</span>
+              Find similar content based on what you've watched
+            </div>
+          </div>
+        </div>
+
+        <div class="jobs-toolbar">
+          <button class="primary-btn" disabled title="Coming Saturday">
+            + New Job
+          </button>
+          <button class="secondary-btn" disabled title="Coming Saturday">
+            ⟳ Refresh
+          </button>
+          <button class="icon-btn-square" title="Help">?</button>
+        </div>
+
+        <div class="jobs-empty">
+          <p>No jobs yet — scheduled recommendations land tomorrow.</p>
+          <p class="muted">
+            The full Jobs CRUD with EventBridge-backed scheduling is the next
+            piece of work. The UI shell is here so you can see the layout.
+          </p>
+        </div>
+      </section>
+
+      <p id="global-error" class="error" hidden></p>
     </main>
 
     <script src="app.js" defer></script>
