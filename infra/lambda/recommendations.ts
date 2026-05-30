@@ -109,7 +109,14 @@ const enrichWithTmdb = async (
   }
 };
 
-export const handler: APIGatewayProxyHandler = async () => {
+export const handler: APIGatewayProxyHandler = async (event) => {
+  // API Gateway's Cognito authorizer puts validated JWT claims here.
+  // For this demo we still look up the seeded 'kyle' record regardless of who
+  // authenticated — in production the partition key would be claims.sub.
+  const claims = (event.requestContext as unknown as {
+    authorizer?: { claims?: Record<string, string> };
+  }).authorizer?.claims;
+
   const watchHistoryRecord = await ddb.send(
     new GetCommand({
       TableName: TABLE_NAME,
@@ -158,6 +165,8 @@ export const handler: APIGatewayProxyHandler = async () => {
       recommendations: enriched,
       meta: {
         userId: USER_ID,
+        authenticatedAs: claims?.email ?? null,
+        cognitoSub: claims?.sub ?? null,
         basedOnMovieCount: watched.length,
         modelId: MODEL_ID,
         filteredOutCount: raw.length - filtered.length,

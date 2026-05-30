@@ -4,6 +4,7 @@ import {
   aws_apigateway as apigateway,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
+  aws_cognito as cognito,
   aws_dynamodb as dynamodb,
   aws_iam as iam,
   aws_lambda as lambda,
@@ -12,6 +13,8 @@ import {
 } from 'aws-cdk-lib';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Construct } from 'constructs';
+
+const COGNITO_DOMAIN_PREFIX = 'ai-movie-recs-kbooker';
 
 export class InfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -56,19 +59,6 @@ export class InfraStack extends cdk.Stack {
       }),
     );
 
-    const api = new apigateway.RestApi(this, 'RecommenderApi', {
-      restApiName: 'Movie Recommender API',
-      deployOptions: { stageName: 'prod' },
-      defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
-        allowMethods: ['GET', 'OPTIONS'],
-      },
-    });
-
-    api.root
-      .addResource('recommendations')
-      .addMethod('GET', new apigateway.LambdaIntegration(recommendationsFn));
-
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -89,10 +79,76 @@ export class InfraStack extends cdk.Stack {
       ],
     });
 
+    const frontendOrigin = `https://${distribution.distributionDomainName}`;
+    const callbackUrl = `${frontendOrigin}/`;
+
+    const userPool = new cognito.UserPool(this, 'UserPool', {
+      selfSignUpEnabled: true,
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      passwordPolicy: {
+        minLength: 8,
+        requireDigits: true,
+        requireLowercase: true,
+        requireUppercase: false,
+        requireSymbols: false,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const userPoolDomain = userPool.addDomain('UserPoolDomain', {
+      cognitoDomain: { domainPrefix: COGNITO_DOMAIN_PREFIX },
+    });
+
+    const userPoolClient = userPool.addClient('UserPoolClient', {
+      authFlows: { userSrp: true },
+      generateSecret: false,
+      oAuth: {
+        flows: { implicitCodeGrant: true },
+        scopes: [
+          cognito.OAuthScope.OPENID,
+          cognito.OAuthScope.EMAIL,
+          cognito.OAuthScope.PROFILE,
+        ],
+        callbackUrls: [callbackUrl],
+        logoutUrls: [callbackUrl],
+      },
+      preventUserExistenceErrors: true,
+    });
+
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'ApiAuthorizer', {
+      cognitoUserPools: [userPool],
+    });
+
+    const api = new apigateway.RestApi(this, 'RecommenderApi', {
+      restApiName: 'Movie Recommender API',
+      deployOptions: { stageName: 'prod' },
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: ['GET', 'OPTIONS'],
+        allowHeaders: ['Content-Type', 'Authorization'],
+      },
+    });
+
+    api.root
+      .addResource('recommendations')
+      .addMethod('GET', new apigateway.LambdaIntegration(recommendationsFn), {
+        authorizer,
+        authorizationType: apigateway.AuthorizationType.COGNITO,
+      });
+
     new s3deploy.BucketDeployment(this, 'DeployFrontend', {
       sources: [
         s3deploy.Source.asset(path.join(__dirname, '..', '..', 'frontend')),
-        s3deploy.Source.jsonData('config.json', { apiUrl: api.url }),
+        s3deploy.Source.jsonData('config.json', {
+          apiUrl: api.url,
+          cognito: {
+            domain: userPoolDomain.baseUrl(),
+            clientId: userPoolClient.userPoolClientId,
+            redirectUri: callbackUrl,
+          },
+        }),
       ],
       destinationBucket: frontendBucket,
       distribution,
@@ -110,8 +166,23 @@ export class InfraStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'FrontendUrl', {
-      value: `https://${distribution.distributionDomainName}`,
+      value: frontendOrigin,
       description: 'CloudFront URL for the frontend (open this in a browser)',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolId', {
+      value: userPool.userPoolId,
+      description: 'Cognito User Pool ID',
+    });
+
+    new cdk.CfnOutput(this, 'UserPoolClientId', {
+      value: userPoolClient.userPoolClientId,
+      description: 'Cognito App Client ID',
+    });
+
+    new cdk.CfnOutput(this, 'CognitoLoginUrl', {
+      value: `${userPoolDomain.baseUrl()}/login?client_id=${userPoolClient.userPoolClientId}&response_type=token&scope=openid+email+profile&redirect_uri=${encodeURIComponent(callbackUrl)}`,
+      description: 'Direct link to the Cognito hosted UI login page',
     });
   }
 }
