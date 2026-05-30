@@ -9,7 +9,7 @@ import {
 const TABLE_NAME = process.env.TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
 const USER_ID = 'kyle';
-const NUM_RECOMMENDATIONS = 5;
+const NUM_RECOMMENDATIONS = 3;
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const bedrock = new BedrockRuntimeClient({});
@@ -41,7 +41,7 @@ const buildPrompt = (watched: WatchedMovie[]): string => {
     'and whether they finished it (completed). Rewatches and completion are strong',
     'preference signals; abandoned movies are weak negative signals.',
     '',
-    `Recommend exactly ${NUM_RECOMMENDATIONS} movies the user would likely enjoy but has not watched.`,
+    `Recommend exactly ${NUM_RECOMMENDATIONS} movies the user would likely enjoy but has not watched based on their previous watch history.`,
     'Vary the genres and eras. For each recommendation, write a one-sentence reason',
     'that references specific watched titles when possible.',
     '',
