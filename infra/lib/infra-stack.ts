@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib/core';
 import {
   aws_apigateway as apigateway,
   aws_dynamodb as dynamodb,
+  aws_iam as iam,
   aws_lambda as lambda,
 } from 'aws-cdk-lib';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -18,13 +19,16 @@ export class InfraStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    const modelId = 'amazon.nova-micro-v1:0';
+
     const recommendationsFn = new NodejsFunction(this, 'RecommendationsFn', {
       entry: path.join(__dirname, '..', 'lambda', 'recommendations.ts'),
       runtime: lambda.Runtime.NODEJS_22_X,
-      timeout: cdk.Duration.seconds(10),
+      timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {
         TABLE_NAME: watchHistory.tableName,
+        MODEL_ID: modelId,
       },
       bundling: {
         externalModules: ['@aws-sdk/*'],
@@ -32,6 +36,13 @@ export class InfraStack extends cdk.Stack {
     });
 
     watchHistory.grantReadData(recommendationsFn);
+
+    recommendationsFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [`arn:aws:bedrock:${this.region}::foundation-model/${modelId}`],
+      }),
+    );
 
     const api = new apigateway.RestApi(this, 'RecommenderApi', {
       restApiName: 'Movie Recommender API',
