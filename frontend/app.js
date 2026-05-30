@@ -252,12 +252,15 @@ function renderRequestCard(req) {
     : renderRecsGrid(req.recommendations ?? []);
 
   return `
-    <article class="request-card">
+    <article class="request-card" data-request-id="${escapeHtml(req.requestId)}">
       <header class="request-card-header">
         <h3 class="request-card-title">
           <span>${escapeHtml(label)}</span>
         </h3>
-        <span class="request-card-time">${escapeHtml(time)}</span>
+        <div class="request-card-right">
+          <span class="request-card-time">${escapeHtml(time)}</span>
+          <button class="icon-btn" data-request-delete title="Delete this run">🗑</button>
+        </div>
       </header>
       ${body}
     </article>`;
@@ -282,6 +285,18 @@ async function loadRequestHistory() {
     renderRequestHistory(data.recent ?? []);
   } catch (err) {
     els.resultsError.textContent = err.message;
+    els.resultsError.hidden = false;
+  }
+}
+
+async function deleteRequest(requestId) {
+  try {
+    await apiFetch(`requests/${encodeURIComponent(requestId)}`, {
+      method: "DELETE",
+    });
+    await Promise.all([loadStats(), loadRequestHistory()]);
+  } catch (err) {
+    els.resultsError.textContent = `Could not delete: ${err.message}`;
     els.resultsError.hidden = false;
   }
 }
@@ -626,6 +641,13 @@ function wireJobsTab() {
     els.refreshRequestsBtn.addEventListener("click", () => {
       loadStats();
       loadRequestHistory();
+    });
+    els.requestsList.addEventListener("click", (event) => {
+      const btn = event.target.closest("[data-request-delete]");
+      if (!btn) return;
+      const card = btn.closest("[data-request-id]");
+      if (!card) return;
+      deleteRequest(card.dataset.requestId);
     });
     wireServicesTab();
     wireJobsTab();

@@ -18,7 +18,9 @@ const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const USER_ID = 'kyle';
 const NUM_RECOMMENDATIONS = 3;
 
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 const bedrock = new BedrockRuntimeClient({});
 
 type WatchedMovie = {
@@ -202,25 +204,21 @@ export const handler: APIGatewayProxyHandler = async (event) => {
   const runAt = Math.floor(Date.now() / 1000);
   const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 
-  try {
-    await ddb.send(
-      new PutCommand({
-        TableName: REQUESTS_TABLE_NAME,
-        Item: {
-          userId: requestUserId,
-          requestId,
-          jobName: 'Manual run',
-          runAt,
-          status: 'success',
-          recommendations: enriched,
-          modelId: MODEL_ID,
-          basedOnMovieCount: watched.length,
-        },
-      }),
-    );
-  } catch (err) {
-    console.error('Failed to persist manual run:', err);
-  }
+  await ddb.send(
+    new PutCommand({
+      TableName: REQUESTS_TABLE_NAME,
+      Item: {
+        userId: requestUserId,
+        requestId,
+        jobName: 'Manual run',
+        runAt,
+        status: 'success',
+        recommendations: enriched,
+        modelId: MODEL_ID,
+        basedOnMovieCount: watched.length,
+      },
+    }),
+  );
 
   return {
     statusCode: 200,

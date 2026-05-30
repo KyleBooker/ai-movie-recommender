@@ -30,7 +30,9 @@ const SCHEDULER_ROLE_ARN = process.env.SCHEDULER_ROLE_ARN!;
 const SCHEDULED_FN_ARN = process.env.SCHEDULED_FN_ARN!;
 const SCHEDULE_GROUP_NAME = process.env.SCHEDULE_GROUP_NAME || 'default';
 
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 const scheduler = new SchedulerClient({});
 const lambdaClient = new LambdaClient({});
 
@@ -221,11 +223,14 @@ const listRequests = async (userId: string) => {
       ScanIndexForward: false,
     }),
   );
-  return (res.Items ?? []) as Array<{
+  const items = (res.Items ?? []) as Array<{
     requestId: string;
     runAt: number;
     status: string;
   }>;
+  // Sort newest-first by runAt in code as a safety net — the sort key may
+  // include legacy non-timestamped requestIds from earlier deploys.
+  return items.sort((a, b) => (b.runAt ?? 0) - (a.runAt ?? 0));
 };
 
 const computeStats = (requests: Array<{ runAt: number }>) => {
@@ -299,6 +304,16 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         ...computeStats(requests),
         recent: requests.slice(0, 20),
       });
+    }
+
+    if (route === 'DELETE /requests/{requestId}' && event.pathParameters?.requestId) {
+      await ddb.send(
+        new DeleteCommand({
+          TableName: REQUESTS_TABLE_NAME,
+          Key: { userId: userSub, requestId: event.pathParameters.requestId },
+        }),
+      );
+      return json(200, { ok: true });
     }
 
     if (route === 'GET /jobs') {

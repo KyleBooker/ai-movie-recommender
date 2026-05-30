@@ -137,7 +137,7 @@ export class InfraStack extends cdk.Stack {
     });
     userSettings.grantReadWriteData(apiFn);
     jobs.grantReadWriteData(apiFn);
-    requests.grantReadData(apiFn);
+    requests.grantReadWriteData(apiFn);
     scheduledRunFn.grantInvoke(apiFn);
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -253,7 +253,11 @@ export class InfraStack extends cdk.Stack {
     settingsTest.addResource('tmdb').addMethod('POST', apiIntegration, authedMethod);
     settingsTest.addResource('omdb').addMethod('POST', apiIntegration, authedMethod);
 
-    api.root.addResource('requests').addMethod('GET', apiIntegration, authedMethod);
+    const requestsResource = api.root.addResource('requests');
+    requestsResource.addMethod('GET', apiIntegration, authedMethod);
+    requestsResource
+      .addResource('{requestId}')
+      .addMethod('DELETE', apiIntegration, authedMethod);
 
     const jobsResource = api.root.addResource('jobs');
     jobsResource.addMethod('GET', apiIntegration, authedMethod);

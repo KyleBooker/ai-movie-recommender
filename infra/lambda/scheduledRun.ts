@@ -19,7 +19,9 @@ const MODEL_ID = process.env.MODEL_ID!;
 const FALLBACK_TMDB_KEY = process.env.TMDB_API_KEY;
 const WATCH_HISTORY_USER_ID = 'kyle';
 
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 const bedrock = new BedrockRuntimeClient({});
 
 type WatchedMovie = {
@@ -183,8 +185,8 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
   const watched = (historyRes.Item?.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 
-  const requestId = randomUUID();
   const runAt = Math.floor(Date.now() / 1000);
+  const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;
 
   try {
     const bedrockResponse = await bedrock.send(
