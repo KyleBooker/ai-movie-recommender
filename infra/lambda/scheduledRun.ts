@@ -17,7 +17,7 @@ const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
 const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
-const WATCH_HISTORY_USER_ID = 'kyle';
+const LEGACY_SHARED_USER_ID = 'kyle';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -256,12 +256,15 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
   const effectiveTmdbKey = (settingsRes.Item as { tmdbApiKey?: string } | undefined)
     ?.tmdbApiKey;
 
-  const historyRes = await ddb.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { userId: WATCH_HISTORY_USER_ID },
-    }),
+  // Try per-user record first, fall back to legacy shared 'kyle' record.
+  let historyRes = await ddb.send(
+    new GetCommand({ TableName: TABLE_NAME, Key: { userId } }),
   );
+  if (!historyRes.Item) {
+    historyRes = await ddb.send(
+      new GetCommand({ TableName: TABLE_NAME, Key: { userId: LEGACY_SHARED_USER_ID } }),
+    );
+  }
   const watched = (historyRes.Item?.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 

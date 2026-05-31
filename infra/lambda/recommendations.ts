@@ -16,7 +16,7 @@ const TABLE_NAME = process.env.TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
 const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
-const USER_ID = 'kyle';
+const LEGACY_SHARED_USER_ID = 'kyle';
 const NUM_RECOMMENDATIONS = 3;
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -252,12 +252,22 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     authorizer?: { claims?: Record<string, string> };
   }).authorizer?.claims;
 
-  const watchHistoryRecord = await ddb.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { userId: USER_ID },
-    }),
-  );
+  const userSub = claims?.sub;
+
+  // Try the per-user record first, fall back to the legacy shared 'kyle' record
+  // for backwards compatibility with users who haven't imported their own
+  // history yet.
+  let watchHistoryRecord = userSub
+    ? await ddb.send(
+        new GetCommand({ TableName: TABLE_NAME, Key: { userId: userSub } }),
+      )
+    : { Item: undefined };
+
+  if (!watchHistoryRecord.Item) {
+    watchHistoryRecord = await ddb.send(
+      new GetCommand({ TableName: TABLE_NAME, Key: { userId: LEGACY_SHARED_USER_ID } }),
+    );
+  }
 
   if (!watchHistoryRecord.Item) {
     return {
@@ -266,14 +276,17 @@ export const handler: APIGatewayProxyHandler = async (event) => {
         'content-type': 'application/json',
         'access-control-allow-origin': '*',
       },
-      body: JSON.stringify({ error: 'No watch history found', userId: USER_ID }),
+      body: JSON.stringify({
+        error:
+          'No watch history found. Go to the Services tab and import your Tautulli history first.',
+      }),
     };
   }
 
   const watched = (watchHistoryRecord.Item.watchHistory ?? []) as WatchedMovie[];
   const watchedKeys = new Set(watched.map((m) => normalizeKey(m.title, m.year)));
 
-  const requestUserId = claims?.sub ?? USER_ID;
+  const requestUserId = userSub ?? LEGACY_SHARED_USER_ID;
   const recentTitles = await getRecentRecommendedTitles(requestUserId, 10);
 
   const seen = new Set(watchedKeys);
@@ -322,7 +335,7 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     body: JSON.stringify({
       recommendations: enriched,
       meta: {
-        userId: USER_ID,
+        userId: requestUserId,
         authenticatedAs: claims?.email ?? null,
         cognitoSub: claims?.sub ?? null,
         basedOnMovieCount: watched.length,

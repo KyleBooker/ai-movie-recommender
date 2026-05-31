@@ -169,6 +169,65 @@
             </div>
             <p id="omdb-test-result" class="test-result" hidden></p>
           </article>
+
+          <article class="service-card service-card-wide">
+            <header class="service-card-header">
+              <h2><span class="service-icon">▶</span> Tautulli (Plex watch history)</h2>
+              <span id="tautulli-status" class="status-pill status-unknown">
+                <span class="status-dot"></span> Checking…
+              </span>
+            </header>
+            <label class="form-label" for="tautulli-url">Tautulli URL</label>
+            <input
+              id="tautulli-url"
+              type="text"
+              placeholder="https://tautulli.yourdomain.com"
+              autocomplete="off"
+            />
+            <label class="form-label" for="tautulli-key">API Key</label>
+            <div class="input-row">
+              <input
+                id="tautulli-key"
+                type="password"
+                placeholder="Tautulli API key"
+                autocomplete="off"
+              />
+              <button class="icon-btn" data-toggle="tautulli-key" title="Show/hide">
+                👁
+              </button>
+            </div>
+            <p class="form-help">
+              Find this in Tautulli → Settings → Web Interface → API.
+            </p>
+            <div class="card-actions">
+              <button class="primary-btn full" data-action="save-tautulli">
+                Save
+              </button>
+              <button class="secondary-btn full" data-action="test-tautulli">
+                🔌 Test Connection
+              </button>
+            </div>
+            <p id="tautulli-test-result" class="test-result" hidden></p>
+
+            <hr class="card-divider" />
+
+            <label class="form-label" for="tautulli-user">Plex user to import</label>
+            <div class="input-row">
+              <select id="tautulli-user">
+                <option value="">— click Load users below —</option>
+              </select>
+              <button class="icon-btn" data-action="load-tautulli-users" title="Reload users">
+                ⟳
+              </button>
+            </div>
+            <p id="tautulli-current-user" class="form-help"></p>
+            <div class="card-actions">
+              <button class="primary-btn full" data-action="import-tautulli">
+                ⬇ Pull watch history
+              </button>
+            </div>
+            <p id="tautulli-import-result" class="test-result" hidden></p>
+          </article>
         </div>
       </section>
 

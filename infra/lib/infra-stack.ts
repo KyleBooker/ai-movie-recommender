@@ -119,12 +119,13 @@ export class InfraStack extends cdk.Stack {
     const apiFn = new NodejsFunction(this, 'ApiFn', {
       entry: path.join(__dirname, '..', 'lambda', 'api.ts'),
       runtime: lambda.Runtime.NODEJS_22_X,
-      timeout: cdk.Duration.seconds(15),
+      timeout: cdk.Duration.seconds(60),
       memorySize: 256,
       environment: {
         SETTINGS_TABLE_NAME: userSettings.tableName,
         JOBS_TABLE_NAME: jobs.tableName,
         REQUESTS_TABLE_NAME: requests.tableName,
+        WATCH_HISTORY_TABLE_NAME: watchHistory.tableName,
         SCHEDULER_ROLE_ARN: schedulerRole.roleArn,
         SCHEDULED_FN_ARN: scheduledRunFn.functionArn,
         SCHEDULE_GROUP_NAME,
@@ -134,6 +135,7 @@ export class InfraStack extends cdk.Stack {
     userSettings.grantReadWriteData(apiFn);
     jobs.grantReadWriteData(apiFn);
     requests.grantReadWriteData(apiFn);
+    watchHistory.grantReadWriteData(apiFn);
     scheduledRunFn.grantInvoke(apiFn);
     apiFn.addToRolePolicy(
       new iam.PolicyStatement({
@@ -248,6 +250,11 @@ export class InfraStack extends cdk.Stack {
     const settingsTest = settings.addResource('test');
     settingsTest.addResource('tmdb').addMethod('POST', apiIntegration, authedMethod);
     settingsTest.addResource('omdb').addMethod('POST', apiIntegration, authedMethod);
+    settingsTest.addResource('tautulli').addMethod('POST', apiIntegration, authedMethod);
+
+    const tautulli = api.root.addResource('tautulli');
+    tautulli.addResource('users').addMethod('GET', apiIntegration, authedMethod);
+    tautulli.addResource('import').addMethod('POST', apiIntegration, authedMethod);
 
     const requestsResource = api.root.addResource('requests');
     requestsResource.addMethod('GET', apiIntegration, authedMethod);

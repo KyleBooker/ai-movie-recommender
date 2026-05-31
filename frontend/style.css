@@ -336,6 +336,16 @@ h1 {
   gap: 0.75rem;
 }
 
+.service-card-wide {
+  grid-column: 1 / -1;
+}
+
+.card-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0 0.25rem;
+}
+
 .service-card-header {
   display: flex;
   align-items: center;

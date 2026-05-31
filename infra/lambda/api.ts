@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
+const WATCH_HISTORY_TABLE_NAME = process.env.WATCH_HISTORY_TABLE_NAME!;
 const SCHEDULER_ROLE_ARN = process.env.SCHEDULER_ROLE_ARN!;
 const SCHEDULED_FN_ARN = process.env.SCHEDULED_FN_ARN!;
 const SCHEDULE_GROUP_NAME = process.env.SCHEDULE_GROUP_NAME || 'default';
@@ -57,7 +58,17 @@ type UserSettings = {
   userId: string;
   tmdbApiKey?: string;
   omdbApiKey?: string;
+  tautulliUrl?: string;
+  tautulliApiKey?: string;
+  tautulliUserId?: string;
+  tautulliUsername?: string;
   updatedAt: number;
+};
+
+const normalizeTautulliUrl = (raw: string): string => {
+  let url = raw.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  return url;
 };
 
 const getSettings = async (userId: string): Promise<UserSettings | null> => {
@@ -73,6 +84,10 @@ const putSettings = (settings: UserSettings) =>
 const sanitizeSettings = (s: UserSettings | null) => ({
   hasTmdbKey: Boolean(s?.tmdbApiKey),
   hasOmdbKey: Boolean(s?.omdbApiKey),
+  hasTautulliConfig: Boolean(s?.tautulliUrl && s?.tautulliApiKey),
+  tautulliUrl: s?.tautulliUrl ?? null,
+  tautulliUserId: s?.tautulliUserId ?? null,
+  tautulliUsername: s?.tautulliUsername ?? null,
   updatedAt: s?.updatedAt ?? null,
 });
 
@@ -105,6 +120,138 @@ const testOmdb = async (apiKey: string) => {
     return { ok: false, status: 401, message: data.Error ?? 'OMDb rejected the key.' };
   }
   return { ok: true, status: 200, message: 'Connected to OMDb.' };
+};
+
+// ----- Tautulli -----
+type TautulliUser = {
+  user_id: number;
+  username: string;
+  friendly_name: string;
+  is_active?: number;
+};
+
+type TautulliHistoryRow = {
+  rating_key: number;
+  title: string;
+  year: number;
+  date: number;
+  play_duration: number;
+  percent_complete: number;
+  media_type: string;
+};
+
+const callTautulli = async <T>(
+  url: string,
+  apiKey: string,
+  cmd: string,
+  extraParams: Record<string, string | number> = {},
+): Promise<T> => {
+  const params = new URLSearchParams({ apikey: apiKey, cmd });
+  for (const [k, v] of Object.entries(extraParams)) params.append(k, String(v));
+  const fullUrl = `${normalizeTautulliUrl(url)}/api/v2?${params.toString()}`;
+  const res = await fetch(fullUrl, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Tautulli returned HTTP ${res.status}`);
+  const json = (await res.json()) as { response?: { result?: string; data?: T; message?: string } };
+  if (json.response?.result !== 'success') {
+    throw new Error(json.response?.message ?? 'Tautulli returned unsuccessful response');
+  }
+  return json.response.data as T;
+};
+
+const testTautulli = async (url: string, apiKey: string) => {
+  try {
+    const data = await callTautulli<{ users?: TautulliUser[] } | TautulliUser[]>(
+      url,
+      apiKey,
+      'get_users',
+    );
+    const users = Array.isArray(data) ? data : data.users ?? [];
+    return {
+      ok: true,
+      status: 200,
+      message: `Connected. Found ${users.length} user${users.length === 1 ? '' : 's'}.`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      message: err instanceof Error ? err.message : 'Could not reach Tautulli',
+    };
+  }
+};
+
+type WatchedMovieRecord = {
+  ratingKey: number;
+  title: string;
+  year: number;
+  lastWatchedAt: number;
+  playCount: number;
+  maxCompletion: number;
+  totalPlayDurationSec: number;
+  completed: boolean;
+};
+
+const transformHistoryRows = (rows: TautulliHistoryRow[]): WatchedMovieRecord[] => {
+  const byMovie = new Map<number, Omit<WatchedMovieRecord, 'completed'>>();
+  for (const row of rows) {
+    if (row.media_type !== 'movie') continue;
+    const existing = byMovie.get(row.rating_key);
+    if (!existing) {
+      byMovie.set(row.rating_key, {
+        ratingKey: row.rating_key,
+        title: row.title,
+        year: row.year,
+        lastWatchedAt: row.date,
+        playCount: 1,
+        maxCompletion: row.percent_complete,
+        totalPlayDurationSec: row.play_duration,
+      });
+    } else {
+      existing.lastWatchedAt = Math.max(existing.lastWatchedAt, row.date);
+      existing.playCount += 1;
+      existing.maxCompletion = Math.max(existing.maxCompletion, row.percent_complete);
+      existing.totalPlayDurationSec += row.play_duration;
+    }
+  }
+  return Array.from(byMovie.values())
+    .map((m) => ({ ...m, completed: m.maxCompletion >= 90 }))
+    .sort((a, b) => b.lastWatchedAt - a.lastWatchedAt);
+};
+
+const importTautulliHistory = async (
+  cognitoSub: string,
+  settings: UserSettings,
+): Promise<{ ok: boolean; movieCount: number; eventCount: number }> => {
+  if (!settings.tautulliUrl || !settings.tautulliApiKey || !settings.tautulliUserId) {
+    throw new Error(
+      'Tautulli URL, API key, and selected user are all required before importing.',
+    );
+  }
+
+  const historyData = await callTautulli<{ data?: TautulliHistoryRow[] } | TautulliHistoryRow[]>(
+    settings.tautulliUrl,
+    settings.tautulliApiKey,
+    'get_history',
+    { user_id: settings.tautulliUserId, media_type: 'movie', length: 10000 },
+  );
+  const rows = Array.isArray(historyData) ? historyData : historyData.data ?? [];
+  const watchHistory = transformHistoryRows(rows);
+
+  await ddb.send(
+    new PutCommand({
+      TableName: WATCH_HISTORY_TABLE_NAME,
+      Item: {
+        userId: cognitoSub,
+        sourceUser: settings.tautulliUsername ?? settings.tautulliUserId,
+        sourceUserId: settings.tautulliUserId,
+        snapshotTakenAt: Math.floor(Date.now() / 1000),
+        movieCount: watchHistory.length,
+        watchHistory,
+      },
+    }),
+  );
+
+  return { ok: true, movieCount: watchHistory.length, eventCount: rows.length };
 };
 
 // ----- Jobs -----
@@ -267,17 +414,30 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     }
 
     if (route === 'PUT /settings') {
-      const body = JSON.parse(event.body ?? '{}') as {
-        tmdbApiKey?: string;
-        omdbApiKey?: string;
-      };
+      const body = JSON.parse(event.body ?? '{}') as Partial<
+        Pick<
+          UserSettings,
+          | 'tmdbApiKey'
+          | 'omdbApiKey'
+          | 'tautulliUrl'
+          | 'tautulliApiKey'
+          | 'tautulliUserId'
+          | 'tautulliUsername'
+        >
+      >;
       const existing = await getSettings(userSub);
+      const merge = <K extends keyof UserSettings>(key: K, fromExisting: UserSettings[K]) =>
+        body[key as keyof typeof body] !== undefined
+          ? (body[key as keyof typeof body] as UserSettings[K])
+          : fromExisting;
       const next: UserSettings = {
         userId: userSub,
-        tmdbApiKey:
-          body.tmdbApiKey !== undefined ? body.tmdbApiKey : existing?.tmdbApiKey,
-        omdbApiKey:
-          body.omdbApiKey !== undefined ? body.omdbApiKey : existing?.omdbApiKey,
+        tmdbApiKey: merge('tmdbApiKey', existing?.tmdbApiKey),
+        omdbApiKey: merge('omdbApiKey', existing?.omdbApiKey),
+        tautulliUrl: merge('tautulliUrl', existing?.tautulliUrl),
+        tautulliApiKey: merge('tautulliApiKey', existing?.tautulliApiKey),
+        tautulliUserId: merge('tautulliUserId', existing?.tautulliUserId),
+        tautulliUsername: merge('tautulliUsername', existing?.tautulliUsername),
         updatedAt: Math.floor(Date.now() / 1000),
       };
       await putSettings(next);
@@ -296,6 +456,60 @@ export const handler: APIGatewayProxyHandler = async (event) => {
       let apiKey = body.apiKey || (await getSettings(userSub))?.omdbApiKey;
       if (!apiKey) return json(400, { ok: false, message: 'No OMDb key provided.' });
       return json(200, await testOmdb(apiKey));
+    }
+
+    if (route === 'POST /settings/test/tautulli') {
+      const body = JSON.parse(event.body ?? '{}') as { url?: string; apiKey?: string };
+      const stored = await getSettings(userSub);
+      const url = body.url || stored?.tautulliUrl;
+      const apiKey = body.apiKey || stored?.tautulliApiKey;
+      if (!url || !apiKey) {
+        return json(400, { ok: false, message: 'Tautulli URL and API key are both required.' });
+      }
+      return json(200, await testTautulli(url, apiKey));
+    }
+
+    if (route === 'GET /tautulli/users') {
+      const stored = await getSettings(userSub);
+      if (!stored?.tautulliUrl || !stored?.tautulliApiKey) {
+        return json(400, { error: 'Save your Tautulli URL and API key first.' });
+      }
+      try {
+        const data = await callTautulli<{ users?: TautulliUser[] } | TautulliUser[]>(
+          stored.tautulliUrl,
+          stored.tautulliApiKey,
+          'get_users',
+        );
+        const users = Array.isArray(data) ? data : data.users ?? [];
+        // Only return active users with friendly names
+        const cleaned = users
+          .filter((u) => u.user_id && u.username)
+          .map((u) => ({
+            user_id: u.user_id,
+            username: u.username,
+            friendly_name: u.friendly_name || u.username,
+          }));
+        return json(200, { users: cleaned });
+      } catch (err) {
+        return json(502, {
+          error: 'Could not load Tautulli users',
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (route === 'POST /tautulli/import') {
+      const stored = await getSettings(userSub);
+      if (!stored) return json(400, { error: 'No settings stored yet.' });
+      try {
+        const result = await importTautulliHistory(userSub, stored);
+        return json(200, result);
+      } catch (err) {
+        return json(502, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     if (route === 'GET /requests') {

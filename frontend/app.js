@@ -27,6 +27,13 @@ const els = {
   omdbStatus: document.getElementById("omdb-status"),
   tmdbResult: document.getElementById("tmdb-test-result"),
   omdbResult: document.getElementById("omdb-test-result"),
+  tautulliUrl: document.getElementById("tautulli-url"),
+  tautulliKey: document.getElementById("tautulli-key"),
+  tautulliStatus: document.getElementById("tautulli-status"),
+  tautulliResult: document.getElementById("tautulli-test-result"),
+  tautulliUser: document.getElementById("tautulli-user"),
+  tautulliCurrentUser: document.getElementById("tautulli-current-user"),
+  tautulliImportResult: document.getElementById("tautulli-import-result"),
   newJobBtn: document.getElementById("new-job-btn"),
   refreshJobsBtn: document.getElementById("refresh-jobs-btn"),
   jobsList: document.getElementById("jobs-list"),
@@ -355,9 +362,20 @@ async function loadSettings() {
       settings.hasOmdbKey ? "status-connected" : "status-not-set",
       settings.hasOmdbKey ? "Connected" : "Not set",
     );
-    // Mask existing values: don't pre-fill, just show placeholder.
+    setStatusPill(
+      els.tautulliStatus,
+      settings.hasTautulliConfig ? "status-connected" : "status-not-set",
+      settings.hasTautulliConfig ? "Connected" : "Not set",
+    );
     if (settings.hasTmdbKey) els.tmdbKey.placeholder = "•••••••••••••••• (saved)";
     if (settings.hasOmdbKey) els.omdbKey.placeholder = "•••••••••••••••• (saved)";
+    if (settings.tautulliUrl) els.tautulliUrl.value = settings.tautulliUrl;
+    if (settings.hasTautulliConfig) {
+      els.tautulliKey.placeholder = "•••••••••••••••• (saved)";
+    }
+    if (settings.tautulliUsername) {
+      els.tautulliCurrentUser.textContent = `Currently selected: ${settings.tautulliUsername}`;
+    }
   } catch (err) {
     console.error("Could not load settings:", err);
   }
@@ -443,6 +461,89 @@ function wireServicesTab() {
       showTestResult(els.omdbResult, result.ok, result.message);
     } catch (err) {
       showTestResult(els.omdbResult, false, err.message);
+    }
+  });
+
+  document.querySelector('[data-action="save-tautulli"]').addEventListener("click", async () => {
+    const url = els.tautulliUrl.value.trim();
+    const key = els.tautulliKey.value.trim();
+    if (!url && !key) {
+      showTestResult(els.tautulliResult, false, "Enter URL and/or key before saving.");
+      return;
+    }
+    try {
+      const body = {};
+      if (url) body.tautulliUrl = url;
+      if (key) body.tautulliApiKey = key;
+      await apiFetch("settings", { method: "PUT", body: JSON.stringify(body) });
+      els.tautulliKey.value = "";
+      if (key) els.tautulliKey.placeholder = "•••••••••••••••• (saved)";
+      setStatusPill(els.tautulliStatus, "status-connected", "Connected");
+      showTestResult(els.tautulliResult, true, "Saved.");
+    } catch (err) {
+      showTestResult(els.tautulliResult, false, err.message);
+    }
+  });
+
+  document.querySelector('[data-action="test-tautulli"]').addEventListener("click", async () => {
+    showTestResult(els.tautulliResult, true, "Testing…");
+    try {
+      const body = {};
+      if (els.tautulliUrl.value.trim()) body.url = els.tautulliUrl.value.trim();
+      if (els.tautulliKey.value.trim()) body.apiKey = els.tautulliKey.value.trim();
+      const result = await apiFetch("settings/test/tautulli", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      showTestResult(els.tautulliResult, result.ok, result.message);
+    } catch (err) {
+      showTestResult(els.tautulliResult, false, err.message);
+    }
+  });
+
+  document.querySelector('[data-action="load-tautulli-users"]').addEventListener("click", async () => {
+    showTestResult(els.tautulliResult, true, "Loading users…");
+    try {
+      const { users } = await apiFetch("tautulli/users");
+      els.tautulliUser.innerHTML = `<option value="">— pick a user —</option>` +
+        users.map(
+          (u) =>
+            `<option value="${escapeHtml(u.user_id)}" data-username="${escapeHtml(u.username)}">${escapeHtml(u.friendly_name)} (${escapeHtml(u.username)})</option>`,
+        ).join("");
+      showTestResult(els.tautulliResult, true, `Loaded ${users.length} users.`);
+    } catch (err) {
+      showTestResult(els.tautulliResult, false, err.message);
+    }
+  });
+
+  els.tautulliUser.addEventListener("change", async () => {
+    const selected = els.tautulliUser.selectedOptions[0];
+    if (!selected || !selected.value) return;
+    try {
+      await apiFetch("settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          tautulliUserId: selected.value,
+          tautulliUsername: selected.dataset.username || selected.textContent,
+        }),
+      });
+      els.tautulliCurrentUser.textContent = `Currently selected: ${selected.textContent}`;
+    } catch (err) {
+      showTestResult(els.tautulliResult, false, `Save failed: ${err.message}`);
+    }
+  });
+
+  document.querySelector('[data-action="import-tautulli"]').addEventListener("click", async () => {
+    showTestResult(els.tautulliImportResult, true, "Importing… this can take 30+ seconds.");
+    try {
+      const result = await apiFetch("tautulli/import", { method: "POST" });
+      showTestResult(
+        els.tautulliImportResult,
+        true,
+        `Imported ${result.movieCount} unique movies (from ${result.eventCount} watch events).`,
+      );
+    } catch (err) {
+      showTestResult(els.tautulliImportResult, false, err.message);
     }
   });
 }
