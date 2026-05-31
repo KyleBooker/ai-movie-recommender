@@ -81,15 +81,47 @@ const getSettings = async (userId: string): Promise<UserSettings | null> => {
 const putSettings = (settings: UserSettings) =>
   ddb.send(new PutCommand({ TableName: SETTINGS_TABLE_NAME, Item: settings }));
 
-const sanitizeSettings = (s: UserSettings | null) => ({
+const sanitizeSettings = (
+  s: UserSettings | null,
+  watchHistoryMeta?: {
+    movieCount?: number;
+    snapshotTakenAt?: number;
+    sourceUser?: string;
+  } | null,
+) => ({
   hasTmdbKey: Boolean(s?.tmdbApiKey),
   hasOmdbKey: Boolean(s?.omdbApiKey),
   hasTautulliConfig: Boolean(s?.tautulliUrl && s?.tautulliApiKey),
   tautulliUrl: s?.tautulliUrl ?? null,
   tautulliUserId: s?.tautulliUserId ?? null,
   tautulliUsername: s?.tautulliUsername ?? null,
+  watchHistory: watchHistoryMeta
+    ? {
+        movieCount: watchHistoryMeta.movieCount ?? 0,
+        snapshotTakenAt: watchHistoryMeta.snapshotTakenAt ?? null,
+        sourceUser: watchHistoryMeta.sourceUser ?? null,
+      }
+    : null,
   updatedAt: s?.updatedAt ?? null,
 });
+
+const getWatchHistoryMeta = async (userId: string) => {
+  try {
+    const res = await ddb.send(
+      new GetCommand({
+        TableName: WATCH_HISTORY_TABLE_NAME,
+        Key: { userId },
+        ProjectionExpression: 'movieCount, snapshotTakenAt, sourceUser',
+      }),
+    );
+    return res.Item as
+      | { movieCount?: number; snapshotTakenAt?: number; sourceUser?: string }
+      | undefined;
+  } catch (err) {
+    console.warn('Could not load watch history meta:', err);
+    return undefined;
+  }
+};
 
 const testTmdb = async (apiKey: string) => {
   const res = await fetch('https://api.themoviedb.org/3/configuration', {
@@ -410,7 +442,11 @@ export const handler: APIGatewayProxyHandler = async (event) => {
 
   try {
     if (route === 'GET /settings') {
-      return json(200, sanitizeSettings(await getSettings(userSub)));
+      const [settings, watchMeta] = await Promise.all([
+        getSettings(userSub),
+        getWatchHistoryMeta(userSub),
+      ]);
+      return json(200, sanitizeSettings(settings, watchMeta));
     }
 
     if (route === 'PUT /settings') {

@@ -34,6 +34,10 @@ const els = {
   tautulliUser: document.getElementById("tautulli-user"),
   tautulliCurrentUser: document.getElementById("tautulli-current-user"),
   tautulliImportResult: document.getElementById("tautulli-import-result"),
+  watchHistoryMeta: document.getElementById("watch-history-meta"),
+  whCount: document.getElementById("wh-count"),
+  whSource: document.getElementById("wh-source"),
+  whSnapshot: document.getElementById("wh-snapshot"),
   newJobBtn: document.getElementById("new-job-btn"),
   refreshJobsBtn: document.getElementById("refresh-jobs-btn"),
   jobsList: document.getElementById("jobs-list"),
@@ -376,9 +380,23 @@ async function loadSettings() {
     if (settings.tautulliUsername) {
       els.tautulliCurrentUser.textContent = `Currently selected: ${settings.tautulliUsername}`;
     }
+    renderWatchHistoryMeta(settings.watchHistory);
   } catch (err) {
     console.error("Could not load settings:", err);
   }
+}
+
+function renderWatchHistoryMeta(meta) {
+  if (!meta || !meta.movieCount) {
+    els.watchHistoryMeta.hidden = true;
+    return;
+  }
+  els.watchHistoryMeta.hidden = false;
+  els.whCount.textContent = meta.movieCount;
+  els.whSource.textContent = meta.sourceUser ?? "—";
+  els.whSnapshot.textContent = meta.snapshotTakenAt
+    ? new Date(meta.snapshotTakenAt * 1000).toLocaleString()
+    : "—";
 }
 
 async function saveSetting(field, value) {
@@ -542,6 +560,9 @@ function wireServicesTab() {
         true,
         `Imported ${result.movieCount} unique movies (from ${result.eventCount} watch events).`,
       );
+      // Re-pull settings so the watch-history-meta panel updates with the new
+      // count and timestamp.
+      await loadSettings();
     } catch (err) {
       showTestResult(els.tautulliImportResult, false, err.message);
     }
