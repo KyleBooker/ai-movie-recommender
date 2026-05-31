@@ -14,8 +14,8 @@ import { randomUUID } from 'node:crypto';
 
 const TABLE_NAME = process.env.TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
+const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
 const USER_ID = 'kyle';
 const NUM_RECOMMENDATIONS = 3;
 
@@ -194,17 +194,33 @@ const extractRecommendations = (
 const normalizeKey = (title: string, year: number): string =>
   `${title.toLowerCase().trim()}|${year}`;
 
+const getUserTmdbKey = async (userId: string): Promise<string | undefined> => {
+  try {
+    const res = await ddb.send(
+      new GetCommand({
+        TableName: SETTINGS_TABLE_NAME,
+        Key: { userId },
+      }),
+    );
+    return (res.Item as { tmdbApiKey?: string } | undefined)?.tmdbApiKey;
+  } catch (err) {
+    console.warn('Could not load user TMDB key:', err);
+    return undefined;
+  }
+};
+
 const enrichWithTmdb = async (
   rec: Recommendation,
+  apiKey: string | undefined,
 ): Promise<EnrichedRecommendation> => {
-  if (!TMDB_API_KEY) return rec;
+  if (!apiKey) return rec;
   try {
     const url = `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(
       rec.title,
     )}&year=${rec.year}`;
     const res = await fetch(url, {
       headers: {
-        Authorization: `Bearer ${TMDB_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         Accept: 'application/json',
       },
     });
@@ -275,7 +291,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     filtered = applyFilter(retryRaw, seen);
   }
 
-  const enriched = await Promise.all(filtered.map(enrichWithTmdb));
+  const tmdbKey = requestUserId ? await getUserTmdbKey(requestUserId) : undefined;
+  const enriched = await Promise.all(filtered.map((rec) => enrichWithTmdb(rec, tmdbKey)));
 
   const runAt = Math.floor(Date.now() / 1000);
   const requestId = `${runAt}-${randomUUID().slice(0, 8)}`;

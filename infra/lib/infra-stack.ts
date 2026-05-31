@@ -22,12 +22,8 @@ export class InfraStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const tmdbApiKey = process.env.TMDB_API_KEY;
-    if (!tmdbApiKey) {
-      throw new Error(
-        'TMDB_API_KEY env var is required. Set it in your shell before cdk synth/deploy.',
-      );
-    }
+    // TMDB API keys are now stored per-user via the Settings tab (UserSettings
+    // table). No build-time secret is required.
 
     // ----- Data -----
     const watchHistory = new dynamodb.Table(this, 'WatchHistory', {
@@ -67,13 +63,14 @@ export class InfraStack extends cdk.Stack {
       environment: {
         TABLE_NAME: watchHistory.tableName,
         REQUESTS_TABLE_NAME: requests.tableName,
+        SETTINGS_TABLE_NAME: userSettings.tableName,
         MODEL_ID: modelId,
-        TMDB_API_KEY: tmdbApiKey,
       },
       bundling: { externalModules: ['@aws-sdk/*'] },
     });
     watchHistory.grantReadData(recommendationsFn);
     requests.grantReadWriteData(recommendationsFn);
+    userSettings.grantReadData(recommendationsFn);
     recommendationsFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['bedrock:InvokeModel'],
@@ -93,7 +90,6 @@ export class InfraStack extends cdk.Stack {
         REQUESTS_TABLE_NAME: requests.tableName,
         SETTINGS_TABLE_NAME: userSettings.tableName,
         MODEL_ID: modelId,
-        TMDB_API_KEY: tmdbApiKey,
       },
       bundling: { externalModules: ['@aws-sdk/*'] },
     });

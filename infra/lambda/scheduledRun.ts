@@ -17,7 +17,6 @@ const JOBS_TABLE_NAME = process.env.JOBS_TABLE_NAME!;
 const REQUESTS_TABLE_NAME = process.env.REQUESTS_TABLE_NAME!;
 const SETTINGS_TABLE_NAME = process.env.SETTINGS_TABLE_NAME!;
 const MODEL_ID = process.env.MODEL_ID!;
-const FALLBACK_TMDB_KEY = process.env.TMDB_API_KEY;
 const WATCH_HISTORY_USER_ID = 'kyle';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -254,9 +253,8 @@ export const runJob = async (userId: string, jobId: string): Promise<void> => {
       Key: { userId },
     }),
   );
-  const userTmdbKey = (settingsRes.Item as { tmdbApiKey?: string } | undefined)
+  const effectiveTmdbKey = (settingsRes.Item as { tmdbApiKey?: string } | undefined)
     ?.tmdbApiKey;
-  const effectiveTmdbKey = userTmdbKey || FALLBACK_TMDB_KEY;
 
   const historyRes = await ddb.send(
     new GetCommand({

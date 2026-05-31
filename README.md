@@ -122,7 +122,8 @@ ai-movie-recommender/
 - AWS CLI configured with credentials (`aws configure`)
 - AWS account with Bedrock model access for Nova Micro (auto-enabled on first
   invocation in `us-east-1`)
-- TMDB v4 API Read Access Token
+- TMDB v4 API Read Access Token (entered through the in-app Settings tab
+  after first deploy — no longer required at build time)
 
 ### One-time setup
 
@@ -141,11 +142,7 @@ cdk bootstrap
 ### Deploy
 
 ```bash
-# In infra/
-set TMDB_API_KEY=eyJ...your-v4-bearer-token   # cmd.exe
-$env:TMDB_API_KEY = "eyJ..."                  # PowerShell
-export TMDB_API_KEY=eyJ...                    # bash
-
+cd infra
 cdk deploy
 ```
 
@@ -154,6 +151,13 @@ deploys are ~30s–2min depending on what changed.
 
 After deploy, copy the `TableName` and `FrontendUrl` from CloudFormation
 outputs.
+
+### Configure your TMDB key (in the app, not the shell)
+
+Open `FrontendUrl`, sign up for a Cognito account, go to **Services** tab,
+paste your TMDB v4 token, and Save. Recommendations now include poster art
+and click-through links. Without a key, recommendations still work — just
+without TMDB enrichment.
 
 ### Seed watch history
 
