@@ -6,8 +6,8 @@ from DynamoDB, asks Amazon Nova Micro for personalized picks, enriches each
 result with poster art from TMDB, and returns it to a CloudFront-hosted SPA.
 
 Infrastructure is defined entirely in TypeScript via AWS CDK. The full stack
-tears down and redeploys end-to-end in under 20 minutes including data
-seeding.
+tears down and redeploys end-to-end in about 15 minutes, including
+in-product Tautulli import and per-user configuration.
 
 ---
 
@@ -159,17 +159,25 @@ paste your TMDB v4 token, and Save. Recommendations now include poster art
 and click-through links. Without a key, recommendations still work — just
 without TMDB enrichment.
 
-### Seed watch history
+### Configure watch history (in the app)
 
-The project expects a Tautulli movie history export at
-`infra/data/watch-history.json`. Pull it with:
+After deploy, open `FrontendUrl`, sign up for a Cognito account, then go
+to the **Services** tab:
 
-```bash
-curl "https://<your-tautulli>/api/v2?apikey=<key>&cmd=get_history&user_id=<id>&media_type=movie&length=10000" \
-  > infra/data/watch-history.json
-```
+1. Paste your TMDB v4 token, click **Save**
+2. Enter your Tautulli URL and API key, click **Save** and **Test Connection**
+3. Click **Load users**, pick your Plex user from the dropdown
+4. Click **Pull watch history** — the import takes 10–30 seconds and
+   populates a per-user DynamoDB record keyed by your Cognito sub
 
-Then seed DynamoDB:
+Then switch to the **Requests** tab and click **Get recommendations**.
+
+### Legacy seed script (optional)
+
+For bootstrap scenarios where you have a Tautulli JSON export but no
+Cognito user yet, the original `npm run seed` script still works. It
+writes to the shared `userId='kyle'` record, which any authenticated user
+falls back to if their per-user record doesn't exist yet.
 
 ```bash
 cd infra
