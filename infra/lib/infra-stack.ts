@@ -212,6 +212,8 @@ export class InfraStack extends cdk.Stack {
           cognito.OAuthScope.EMAIL,
           cognito.OAuthScope.PROFILE,
         ],
+        // Custom domain is the canonical URL; cloudfront URL kept as a fallback
+        // so the app still works while DNS propagates after first deploy.
         callbackUrls: [callbackUrl],
         logoutUrls: [callbackUrl],
       },
