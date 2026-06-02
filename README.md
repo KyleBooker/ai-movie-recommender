@@ -46,23 +46,23 @@ in-product Tautulli import and per-user configuration.
 └─────┬───────────────────┬───────────────────┬───────────────┘
       │                   │                   │
       ▼                   ▼                   ▼
-┌──────────────┐   ┌─────────────┐   ┌──────────────────┐
+┌───────────────┐   ┌─────────────┐   ┌──────────────────┐
 │Recommendations│   │   ApiFn     │   │ ScheduledRunFn   │
 │      Fn       │   │  (CRUD)     │   │  (job runner)    │
-└──────┬───────┘   └──────┬──────┘   └────────┬─────────┘
-       │                  │                   │
-       │   Bedrock        │  DynamoDB         │  ▲
-       │   (Nova Micro    │  Settings/Jobs/   │  │ fires on cron
-       │   via Converse,  │  Requests         │  │
-       │   tool-use)      │                   │  │
-       │                  │                   │  │
-       ▼                  ▼                   ▼  │
-┌──────────────┐   ┌────────────────────┐   ┌───┴──────────────┐
+└──────┬────────┘   └──────┬──────┘   └────────┬─────────┘
+       │                   │                   │
+       │   Bedrock         │  DynamoDB         │  ▲
+       │   (Nova Micro     │  Settings/Jobs/   │  │ fires on cron
+       │   via Converse,   │  Requests         │  │
+       │   tool-use)       │                   │  │
+       │                   │                   │  │
+       ▼                   ▼                   ▼  │
+┌──────────────┐   ┌────────────────────┐   ┌──────────────────┐
 │   Bedrock    │   │     DynamoDB       │   │ EventBridge      │
 │  Nova Micro  │   │  WatchHistory      │   │   Scheduler      │
 └──────┬───────┘   │  UserSettings      │   │ (one schedule    │
        │           │  Jobs              │   │  per user job)   │
-       │ TMDB enrichment               │   └──────────────────┘
+       │           |  TMDB Enrichment   │   └──────────────────┘
        ▼           │  Requests          │
 ┌──────────────┐   └────────────────────┘
 │  TMDB API    │
